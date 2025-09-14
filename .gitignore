@@ -21,9 +21,13 @@ wheels/
 *.egg
 
 # Virtual Environment
+.venv/
 venv/
 ENV/
 env/
+
+# uv
+uv.lock
 
 # IDE
 .vscode/
@@ -31,6 +35,11 @@ env/
 *.swp
 *.swo
 *~
+
+# Test files
+tests/*output*.json
+tests/test*.json
+tests/test*.jsonl
 
 # Data files (intermediate/generated)
 datas/merged.jsonl
