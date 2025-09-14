@@ -8,15 +8,19 @@ from scipy.spatial.distance import cosine
 
 class JapaneseEmbedding:
     """日本語埋め込みベクトルを使用した類似度計算クラス"""
-    
-    def __init__(self):
-        """ruri-v3-310mモデルとGPU初期化"""
-        # GPU確認
-        if not torch.cuda.is_available():
-            raise RuntimeError("GPU is not available. This module requires GPU.")
-        
-        self.device = torch.device("cuda")
-        
+
+    def __init__(self, use_gpu: bool = False):
+        """ruri-v3-310mモデルの初期化
+
+        Args:
+            use_gpu: GPUを使用するかどうか (default: False)
+        """
+        # デバイス選択
+        if use_gpu and torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
+
         # モデルとトークナイザーのロード
         model_name = "cl-nagoya/ruri-v3-310m"
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)

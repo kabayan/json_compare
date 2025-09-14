@@ -10,42 +10,57 @@ from .utils import is_numeric, to_numeric
 
 # グローバルで埋め込みモデルを保持（初期化コストを削減）
 _embedding_model = None
+_use_gpu = False
+
+
+def set_gpu_mode(use_gpu: bool):
+    """GPU使用モードを設定"""
+    global _use_gpu
+    _use_gpu = use_gpu
 
 
 def get_embedding_model():
     """埋め込みモデルのシングルトンインスタンスを取得"""
     global _embedding_model
     if _embedding_model is None:
-        _embedding_model = JapaneseEmbedding()
+        _embedding_model = JapaneseEmbedding(use_gpu=_use_gpu)
     return _embedding_model
 
 
-def calculate_json_similarity(json1: str, json2: str) -> float:
+def calculate_json_similarity(json1: str, json2: str) -> tuple:
     """2つのJSON文字列の類似度を計算
-    
+
     Args:
         json1: 比較するJSON文字列1
         json2: 比較するJSON文字列2
-    
+
     Returns:
-        類似度 (0-1)
+        タプル: (類似度 (0-1), 詳細情報の辞書)
     """
     # JSON修復とパース
     dict1 = repair_and_parse_json(json1)
     dict2 = repair_and_parse_json(json2)
-    
+
     # いずれかが修復できなければ0を返す
     if dict1 is None or dict2 is None:
-        return 0.0
-    
+        return 0.0, {"field_match_ratio": 0.0, "value_similarity": 0.0}
+
     # フィールド名一致率（A）
     field_match_ratio = calculate_field_match_ratio(dict1, dict2)
-    
+
     # フィールド値類似度（B）
     field_similarity = calculate_field_similarity(dict1, dict2)
-    
+
     # A × B を類似度とする
-    return field_match_ratio * field_similarity
+    score = field_match_ratio * field_similarity
+
+    # 詳細情報を含めて返す
+    details = {
+        "field_match_ratio": field_match_ratio,
+        "value_similarity": field_similarity
+    }
+
+    return score, details
 
 
 def repair_and_parse_json(json_str: str) -> dict | None:

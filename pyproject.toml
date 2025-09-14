@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "json_compare"
+version = "0.1.0"
+description = "JSON比較ツール - 意味的類似度計算"
+requires-python = ">=3.8"
+dependencies = [
+    "transformers>=4.30.0",
+    "torch>=2.0.0",
+    "scipy>=1.10.0",
+    "json-repair>=0.1.0",
+    "sentencepiece>=0.1.99",
+    "protobuf>=3.20.0",
+]
+
+[project.scripts]
+json_compare = "src.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
