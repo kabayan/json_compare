@@ -8,6 +8,9 @@ JSONLファイル内の`inference1`と`inference2`フィールドの類似度を
 - 🧠 **日本語特化** - cl-nagoya/ruri-v3-310mモデルによる高精度な日本語処理
 - 💻 **CPU/GPU両対応** - デフォルトCPUで軽量動作、GPUオプションで高速処理
 - 📊 **2つの出力形式** - 全体平均（score）と各行詳細（file）
+- 🌐 **Web UI/API対応** - ブラウザからのファイルアップロードとREST API
+- 📈 **エラーハンドリング** - 自動JSONL修復機能とエラーID生成
+- 📝 **詳細ログ** - アクセス、エラー、メトリクスの3種類のログ
 
 ## インストール
 
@@ -103,6 +106,100 @@ uvx --from . json_compare data.jsonl --type file -o details.json
 uvx --from . json_compare data.jsonl --type score --gpu
 ```
 
+## Web UI とAPI
+
+### Web UIの起動
+
+```bash
+# APIサーバーを起動（ポート18081）
+uv run uvicorn src.api:app --host 0.0.0.0 --port 18081
+
+# ブラウザでアクセス
+http://localhost:18081/ui
+```
+
+Web UIでは以下の機能が利用可能：
+- JSONLファイルのドラッグ＆ドロップまたは選択
+- 出力形式の選択（スコア/ファイル詳細）
+- GPU使用の有無選択
+- 結果のJSON/CSV形式でのダウンロード
+
+### REST APIエンドポイント
+
+#### 1. ファイルアップロード
+
+```bash
+curl -X POST http://localhost:18081/upload \
+  -F "file=@data.jsonl" \
+  -F "type=score" \
+  -F "gpu=false"
+```
+
+**レスポンス例（エラーハンドリング付き）：**
+```json
+{
+  "overall_similarity": 0.7587,
+  "statistics": {
+    "mean": 0.7587,
+    "median": 0.7654,
+    "std_dev": 0.1234
+  },
+  "_metadata": {
+    "processing_time": "1.23秒",
+    "original_filename": "data.jsonl",
+    "gpu_used": false
+  }
+}
+```
+
+#### 2. ヘルスチェック
+
+```bash
+curl http://localhost:18081/health
+```
+
+#### 3. メトリクス確認
+
+```bash
+curl http://localhost:18081/metrics
+```
+
+**レスポンス例：**
+```json
+{
+  "upload_metrics": {
+    "total_uploads": 25,
+    "successful_uploads": 23,
+    "failed_uploads": 2,
+    "success_rate": 92.0,
+    "average_processing_time": 0.85
+  },
+  "timestamp": "2025-09-17T12:34:56.789Z"
+}
+```
+
+### エラーレスポンス
+
+APIはユーザーフレンドリーなエラーメッセージを返します：
+
+```json
+{
+  "detail": {
+    "error_id": "ERR-20250917-abc123",
+    "error": "ファイルの形式に問題があります",
+    "details": {
+      "filename": "test.txt",
+      "expected": ".jsonl"
+    },
+    "suggestions": [
+      "ファイルがJSONL形式であることを確認してください",
+      "各行が有効なJSONオブジェクトであることを確認してください"
+    ],
+    "timestamp": "2025-09-17T12:34:56.789Z"
+  }
+}
+```
+
 ## 入力ファイル形式
 
 JSONLファイル（1行1JSON）で、各行に`inference1`と`inference2`フィールドが必要：
@@ -180,11 +277,27 @@ uv run python -m src.__main__ test.jsonl --type score
 json_compare/
 ├── src/
 │   ├── __main__.py      # CLIエントリーポイント
+│   ├── api.py           # FastAPI RESTエンドポイント
 │   ├── similarity.py    # 類似度計算ロジック
 │   ├── embedding.py     # 埋め込みベクトル処理
+│   ├── error_handler.py # エラーハンドリングシステム
+│   ├── logger.py        # ログシステム
 │   └── utils.py         # ユーティリティ関数
+├── tests/
+│   ├── test_integration.py     # 統合テストスイート
+│   ├── test_error_handling.py  # エラーハンドリングテスト
+│   └── test_ui_playwright*.py  # WebUIテスト
 ├── datas/               # データファイル
-├── tests/               # テストファイル
 ├── docs/                # ドキュメント
 └── pyproject.toml       # パッケージ設定
 ```
+
+### ログファイル
+
+ログファイルは `/tmp/json_compare/logs/` に保存されます：
+
+- `access.log` - すべてのAPIリクエスト
+- `error.log` - エラー情報とスタックトレース
+- `metrics.log` - システムメトリクスと統計
+
+ログは自動的にローテーション（10MB制限）され、JSON形式で構造化されています。
