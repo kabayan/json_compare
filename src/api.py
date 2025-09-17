@@ -8,18 +8,36 @@ import json
 import os
 import tempfile
 import time
+import traceback
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union, Dict, Any, List
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import JSONResponse, HTMLResponse, Response
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # 既存実装から関数をインポート
 from .__main__ import process_jsonl_file
 from .similarity import set_gpu_mode
+
+# エラーハンドリングとロギング
+from .error_handler import ErrorHandler, ErrorRecovery, JsonRepair
+from .logger import (
+    get_logger,
+    get_request_logger,
+    get_metrics_collector,
+    SystemLogger,
+    RequestLogger,
+    MetricsCollector
+)
+
+# ロガーの初期化
+logger = get_logger()
+request_logger = get_request_logger()
+metrics_collector = get_metrics_collector()
 
 
 app = FastAPI(
@@ -27,6 +45,45 @@ app = FastAPI(
     description="JSON形式のデータを意味的類似度で比較するAPI",
     version="1.0.0"
 )
+
+# リクエストロギングミドルウェア
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """全HTTPリクエストをログに記録"""
+    request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+
+    # リクエスト開始をログ
+    request_logger.log_request_start(request_id)
+
+    # クライアントIPを取得
+    client_ip = request.client.host if request.client else None
+
+    try:
+        # リクエストを処理
+        response = await call_next(request)
+
+        # リクエスト終了をログ
+        request_logger.log_request_end(
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code,
+            client_ip=client_ip
+        )
+
+        return response
+
+    except Exception as e:
+        # エラーの場合もログに記録
+        request_logger.log_request_end(
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=500,
+            client_ip=client_ip
+        )
+        raise
 
 
 class CompareRequest(BaseModel):
@@ -122,6 +179,7 @@ async def compare(request: CompareRequest) -> Union[Dict[str, Any], List[Dict[st
 
 @app.post("/upload")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...),
     type: str = Form("score"),
     gpu: bool = Form(False)
@@ -130,6 +188,7 @@ async def upload_file(
     ファイルをアップロードして類似度計算を実行する
 
     Args:
+        request: FastAPIのRequestオブジェクト
         file: アップロードされたJSONLファイル
         type: 出力タイプ（"score" または "file"）
         gpu: GPU使用フラグ
@@ -140,7 +199,27 @@ async def upload_file(
     Raises:
         HTTPException: ファイルバリデーションエラー、処理エラーなど
     """
+    start_time = time.time()
+    error_id = None
+    client_ip = request.client.host if request.client else None
+
     try:
+        # システムリソースチェック
+        resource_ok, resource_msg = ErrorHandler.check_system_resources()
+        if not resource_ok:
+            error_id = ErrorHandler.generate_error_id()
+            error_response = ErrorHandler.format_user_error(
+                error_id=error_id,
+                error_type="insufficient_memory" if "メモリ" in resource_msg else "insufficient_storage",
+                details={"resource_check": resource_msg}
+            )
+            logger.log_error(
+                error_id=error_id,
+                error_type="resource_error",
+                error_message=resource_msg,
+                context={"filename": file.filename, "client_ip": client_ip}
+            )
+            raise HTTPException(status_code=503, detail=error_response)
         # typeパラメータの検証
         if type not in ["score", "file"]:
             raise HTTPException(
@@ -157,66 +236,109 @@ async def upload_file(
 
         # ファイル拡張子の検証
         if not file.filename.lower().endswith('.jsonl'):
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "Invalid file type",
-                    "detail": "JSONLファイル(.jsonl拡張子)のみサポートされています"
-                }
+            error_id = ErrorHandler.generate_error_id()
+            error_response = ErrorHandler.format_user_error(
+                error_id=error_id,
+                error_type="file_validation",
+                details={"filename": file.filename, "expected": ".jsonl"}
             )
+            logger.log_error(
+                error_id=error_id,
+                error_type="invalid_file_type",
+                error_message=f"Invalid file type: {file.filename}",
+                context={"filename": file.filename, "client_ip": client_ip}
+            )
+            metrics_collector.record_upload(
+                success=False,
+                processing_time=time.time() - start_time,
+                file_size=0
+            )
+            raise HTTPException(status_code=400, detail=error_response)
 
         # ファイルサイズの確認（100MB制限）
         MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
         file_content = await file.read()
         if len(file_content) > MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=413,
-                detail={
-                    "error": "File too large",
-                    "detail": f"ファイルサイズが制限（100MB）を超えています: {len(file_content) / (1024*1024):.1f}MB"
+            error_id = ErrorHandler.generate_error_id()
+            error_response = ErrorHandler.format_user_error(
+                error_id=error_id,
+                error_type="file_validation",
+                details={
+                    "file_size_mb": len(file_content) / (1024*1024),
+                    "limit_mb": 100
                 }
             )
+            logger.log_error(
+                error_id=error_id,
+                error_type="file_too_large",
+                error_message=f"File too large: {len(file_content) / (1024*1024):.1f}MB",
+                context={"filename": file.filename, "client_ip": client_ip}
+            )
+            metrics_collector.record_upload(
+                success=False,
+                processing_time=time.time() - start_time,
+                file_size=len(file_content)
+            )
+            raise HTTPException(status_code=413, detail=error_response)
 
         # ファイルポインタをリセット
         await file.seek(0)
 
-        # 基本的なJSONL構造の検証
+        # JSONLファイルの検証と修復
         try:
-            # ファイル内容を文字列として読み取り
             content = file_content.decode('utf-8')
-            lines = content.strip().split('\n')
-
-            if not lines or lines == ['']:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "error": "Empty file",
-                        "detail": "ファイルが空です"
-                    }
-                )
-
-            # 最初の数行をJSONとして検証
-            for i, line in enumerate(lines[:5]):  # 最初の5行を検証
-                if line.strip():
-                    try:
-                        json.loads(line)
-                    except json.JSONDecodeError as e:
-                        raise HTTPException(
-                            status_code=400,
-                            detail={
-                                "error": "Invalid JSON format",
-                                "detail": f"行 {i+1} でJSONパースエラー: {str(e)}"
-                            }
-                        )
-
         except UnicodeDecodeError:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "Invalid encoding",
-                    "detail": "ファイルはUTF-8エンコーディングである必要があります"
+            error_id = ErrorHandler.generate_error_id()
+            error_response = ErrorHandler.format_user_error(
+                error_id=error_id,
+                error_type="file_validation",
+                details={"encoding": "UTF-8エンコーディングが必要です"}
+            )
+            logger.log_error(
+                error_id=error_id,
+                error_type="encoding_error",
+                error_message="Invalid UTF-8 encoding",
+                context={"filename": file.filename, "client_ip": client_ip}
+            )
+            raise HTTPException(status_code=400, detail=error_response)
+
+        # JSONLの検証と修復
+        repaired_data, error_messages, validation_ok = ErrorHandler.validate_and_repair_jsonl(content)
+
+        if not validation_ok:
+            error_id = ErrorHandler.generate_error_id()
+            error_response = ErrorHandler.format_user_error(
+                error_id=error_id,
+                error_type="file_validation",
+                details={
+                    "errors": error_messages[:5],  # 最初の5件のエラー
+                    "total_errors": len(error_messages)
                 }
             )
+            logger.log_error(
+                error_id=error_id,
+                error_type="validation_error",
+                error_message="JSONL validation failed",
+                context={
+                    "filename": file.filename,
+                    "errors": error_messages[:10],
+                    "client_ip": client_ip
+                }
+            )
+            raise HTTPException(status_code=400, detail=error_response)
+
+        # 警告があった場合はログに記録（修復済み）
+        if error_messages:
+            logger.access_logger.warning(json.dumps({
+                "event": "jsonl_repaired",
+                "filename": file.filename,
+                "repairs": error_messages[:5],
+                "total_repairs": len(error_messages),
+                "client_ip": client_ip
+            }))
+
+        # 修復済みデータをJSONL形式に戻す
+        repaired_content = '\n'.join(json.dumps(item, ensure_ascii=False) for item in repaired_data)
 
         # 一時ファイルの作成と保存
         temp_dir = tempfile.gettempdir()
@@ -226,9 +348,9 @@ async def upload_file(
 
         temp_file_created = False
         try:
-            # 一時ファイルに内容を保存
-            with open(temp_filepath, 'wb') as f:
-                f.write(file_content)
+            # 一時ファイルに修復済み内容を保存
+            with open(temp_filepath, 'w', encoding='utf-8') as f:
+                f.write(repaired_content)
             temp_file_created = True
 
             # GPUモードの設定
@@ -258,25 +380,109 @@ async def upload_file(
                         "original_filename": file.filename,
                         "gpu_used": gpu
                     }
+                    if error_messages:
+                        result["_metadata"]["data_repairs"] = len(error_messages)
+
+                # 成功をログに記録
+                logger.log_upload(
+                    filename=file.filename,
+                    file_size=len(file_content),
+                    processing_time=processing_time,
+                    result="success",
+                    gpu_mode=gpu,
+                    client_ip=client_ip
+                )
+
+                # メトリクスを更新
+                metrics_collector.record_upload(
+                    success=True,
+                    processing_time=processing_time,
+                    file_size=len(file_content)
+                )
 
                 return result
 
             except asyncio.TimeoutError:
-                raise HTTPException(
-                    status_code=504,
-                    detail={
-                        "error": "Processing timeout",
-                        "detail": "処理が60秒以内に完了しませんでした。より小さいファイルで再試行してください。"
+                error_id = ErrorHandler.generate_error_id()
+                processing_time = time.time() - start_time
+
+                error_response = ErrorHandler.format_user_error(
+                    error_id=error_id,
+                    error_type="processing_timeout",
+                    details={
+                        "timeout": "60秒",
+                        "file_size_mb": len(file_content) / (1024*1024)
                     }
                 )
+
+                logger.log_upload(
+                    filename=file.filename,
+                    file_size=len(file_content),
+                    processing_time=processing_time,
+                    result="timeout",
+                    gpu_mode=gpu,
+                    error="Timeout after 60 seconds",
+                    client_ip=client_ip
+                )
+
+                logger.log_error(
+                    error_id=error_id,
+                    error_type="timeout",
+                    error_message="Processing timeout",
+                    context={
+                        "filename": file.filename,
+                        "file_size": len(file_content),
+                        "gpu_mode": gpu,
+                        "client_ip": client_ip
+                    }
+                )
+
+                metrics_collector.record_upload(
+                    success=False,
+                    processing_time=processing_time,
+                    file_size=len(file_content)
+                )
+
+                raise HTTPException(status_code=504, detail=error_response)
             except MemoryError:
-                raise HTTPException(
-                    status_code=503,
-                    detail={
-                        "error": "Insufficient memory",
-                        "detail": "メモリ不足により処理を完了できませんでした。"
+                error_id = ErrorHandler.generate_error_id()
+                processing_time = time.time() - start_time
+
+                error_response = ErrorHandler.format_user_error(
+                    error_id=error_id,
+                    error_type="insufficient_memory",
+                    details={"file_size_mb": len(file_content) / (1024*1024)}
+                )
+
+                logger.log_upload(
+                    filename=file.filename,
+                    file_size=len(file_content),
+                    processing_time=processing_time,
+                    result="error",
+                    gpu_mode=gpu,
+                    error="Memory error",
+                    client_ip=client_ip
+                )
+
+                logger.log_error(
+                    error_id=error_id,
+                    error_type="memory_error",
+                    error_message="Insufficient memory",
+                    context={
+                        "filename": file.filename,
+                        "file_size": len(file_content),
+                        "gpu_mode": gpu,
+                        "client_ip": client_ip
                     }
                 )
+
+                metrics_collector.record_upload(
+                    success=False,
+                    processing_time=processing_time,
+                    file_size=len(file_content)
+                )
+
+                raise HTTPException(status_code=503, detail=error_response)
 
         except OSError as e:
             # ディスク容量不足などのOSエラー
@@ -284,34 +490,99 @@ async def upload_file(
                 try:
                     os.remove(temp_filepath)
                 except:
-                    pass  # クリーンアップ失敗は無視
+                    pass
 
-            raise HTTPException(
-                status_code=507,
-                detail={
-                    "error": "Insufficient storage",
-                    "detail": f"一時ファイルの作成に失敗しました: {str(e)}"
+            error_id = ErrorHandler.generate_error_id()
+            processing_time = time.time() - start_time
+
+            error_response = ErrorHandler.format_user_error(
+                error_id=error_id,
+                error_type="insufficient_storage",
+                details={"os_error": str(e)}
+            )
+
+            logger.log_upload(
+                filename=file.filename,
+                file_size=len(file_content),
+                processing_time=processing_time,
+                result="error",
+                gpu_mode=gpu,
+                error=f"OS error: {str(e)}",
+                client_ip=client_ip
+            )
+
+            logger.log_error(
+                error_id=error_id,
+                error_type="storage_error",
+                error_message=str(e),
+                context={
+                    "filename": file.filename,
+                    "client_ip": client_ip
                 }
             )
 
+            metrics_collector.record_upload(
+                success=False,
+                processing_time=processing_time,
+                file_size=len(file_content)
+            )
+
+            raise HTTPException(status_code=507, detail=error_response)
+
         finally:
-            # 一時ファイルのクリーンアップ（処理完了後）
-            # 注意: 実際の処理実装時はprocess_jsonl_file完了後にクリーンアップ
+            # 一時ファイルのクリーンアップ
             if temp_file_created and os.path.exists(temp_filepath):
                 try:
                     os.remove(temp_filepath)
-                except:
-                    pass  # クリーンアップ失敗をログに記録（本来はloggingを使用）
+                except Exception as cleanup_error:
+                    logger.error_logger.warning(json.dumps({
+                        "event": "cleanup_failed",
+                        "file": temp_filepath,
+                        "error": str(cleanup_error)
+                    }))
 
     except HTTPException:
         # HTTPExceptionはそのまま再発生
         raise
     except Exception as e:
-        # その他のエラー
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "Internal server error", "detail": str(e)}
+        # 予期しないエラー
+        error_id = ErrorHandler.generate_error_id() if not error_id else error_id
+        processing_time = time.time() - start_time
+
+        error_response = ErrorHandler.format_user_error(
+            error_id=error_id,
+            error_type="internal_error",
+            details={"exception": str(e)}
         )
+
+        logger.log_upload(
+            filename=file.filename if file else "unknown",
+            file_size=len(file_content) if 'file_content' in locals() else 0,
+            processing_time=processing_time,
+            result="error",
+            gpu_mode=gpu,
+            error=str(e),
+            client_ip=client_ip
+        )
+
+        logger.log_error(
+            error_id=error_id,
+            error_type="internal_error",
+            error_message=str(e),
+            stack_trace=traceback.format_exc(),
+            context={
+                "filename": file.filename if file else "unknown",
+                "client_ip": client_ip
+            }
+        )
+
+        metrics_collector.record_upload(
+            success=False,
+            processing_time=processing_time,
+            file_size=len(file_content) if 'file_content' in locals() else 0
+        )
+
+        raise HTTPException(status_code=500, detail=error_response)
 
 
 @app.get("/ui", response_class=HTMLResponse)
@@ -988,6 +1259,9 @@ async def health_check() -> HealthResponse:
     except:
         cli_available = False
 
+    # システムメトリクスをログに記録
+    logger.log_metrics()
+
     return HealthResponse(
         status="healthy",
         cli_available=cli_available
@@ -1010,8 +1284,27 @@ async def root():
             "upload": "POST /upload",
             "download_csv": "POST /download/csv",
             "ui": "GET /ui",
-            "health": "GET /health"
+            "health": "GET /health",
+            "metrics": "GET /metrics"
         }
+    }
+
+
+@app.get("/metrics")
+async def get_metrics():
+    """
+    メトリクス情報を取得
+
+    Returns:
+        アップロード統計とシステムメトリクス
+    """
+    # メトリクスサマリーをログに記録
+    metrics_collector.log_summary()
+
+    # 現在のメトリクスを返す
+    return {
+        "upload_metrics": metrics_collector.get_summary(),
+        "timestamp": datetime.now().isoformat()
     }
 
 
