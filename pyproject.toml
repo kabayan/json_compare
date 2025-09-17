@@ -19,6 +19,13 @@ dependencies = [
     "python-multipart>=0.0.5",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "playwright>=1.40.0",
+]
+
 [project.scripts]
 json_compare = "src.__main__:main"
 json_compare_api = "src.api:main"
