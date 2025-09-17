@@ -14,10 +14,14 @@ dependencies = [
     "json-repair>=0.1.0",
     "sentencepiece>=0.1.99",
     "protobuf>=3.20.0",
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "python-multipart>=0.0.5",
 ]
 
 [project.scripts]
 json_compare = "src.__main__:main"
+json_compare_api = "src.api:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
