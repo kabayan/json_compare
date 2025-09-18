@@ -1,15 +1,44 @@
-## ファイル保存・フォーマット変換api
+# 環境ルール
 
-### 保存
-curl -X POST http://192.168.1.24:28080/file_upload/  -F "file=@data.json"
+## 禁止事項
 
-### 変換とダウンロード
-curl "http://192.168.1.24:28080/download/?format=json" -o output.json
+- [ ] 実行中コンテナへのpipインストール禁止（Dockerfile修正で対応）
 
-### 対応形式
-- `csv` - CSV形式
-- `json` - JSON形式
-- `jsonl` - JSONL形式（行区切りJSON）
-- `xlsx` - Excel形式
-- `yaml` - YAML形式
-- `huggingface` - Parquet形式（HuggingFace datasets互換
+## 必須実施事項
+
+### 実行環境
+- [ ] LLMはAPI経由で利用（直接利用禁止）
+- [ ] LLMサーバーは既存のサーバーを利用
+- [ ] LLMサーバーへのアクセスはopenai api互換エンドポイントを使う
+- [ ] serena mcp、playwright mcpの使用
+
+## LLM設定
+
+### 利用可能LLM
+1. **qwen3:14b-awq**
+   ```bash
+   curl -s http://192.168.1.18:8000/v1/chat/completions \
+     -H "Authorization: Bearer EMPTY" \
+     -H "Content-Type: application/json" \
+     -d '{ 
+       "model": "qwen3-14b-awq", 
+       "messages": [{"role": "user", "content": "日本の首都は？"}],
+       "max_tokens": 64, 
+       "temperature": 0.2,
+       "chat_template_kwargs": {"enable_thinking": false}
+     }'
+   ```
+
+2. **qwen3:1.7b**
+   ```bash
+   curl -s http://192.168.1.3:8000/v1/chat/completions \
+     -H "Authorization: Bearer EMPTY" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "model": "Orion-zhen/Qwen3-1.7B-AWQ",
+       "messages": [{"role": "user", "content": "日本の首都は？"}],
+       "max_tokens": 64,
+       "temperature": 0.2,
+       "chat_template_kwargs": {"enable_thinking": false}
+     }'
+   ```

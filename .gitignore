@@ -52,3 +52,12 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Development tools
+claudecodeui/
+.claude/
+.spec-workflow/
+
+# Backup files
+*.20250917_*
+docs/*.20250917_*

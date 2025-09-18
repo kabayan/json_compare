@@ -1,46 +1,75 @@
-# CLAUDE.md
+# Claude Code Spec-Driven Development
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Kiro-style Spec Driven Development implementation using claude code slash commands, hooks and agents.
 
-## Project Overview
+## Project Context
 
-JSON比較ツール - 2つのJSONファイルの類似度を計算するPythonモジュール。日本語埋め込みベクトルモデル（cl-nagoya/ruri-v3-310m）を使用してフィールド値の意味的類似度を計算。
+### Paths
+- Steering: `.kiro/steering/`
+- Specs: `.kiro/specs/`
+- Commands: `.claude/commands/`
 
-## Key Architecture
+### Steering vs Specification
 
-### Core Components
-- `src/similarity.py`: メインの類似度計算ロジック
-  - JSONの修復・パース（json_repair使用）
-  - フィールド名一致率（A）× フィールド値類似度（B）で最終スコア算出
-  - 再帰的な辞書・リスト比較
+**Steering** (`.kiro/steering/`) - Guide AI with project-wide rules and context
+**Specs** (`.kiro/specs/`) - Formalize development process for individual features
 
-- `src/embedding.py`: 日本語埋め込みベクトル処理
-  - ruri-v3-310mモデルをGPU上で実行
-  - テキストのコサイン類似度計算
-  - シングルトンパターンで初期化コスト削減
+### Active Specifications
+- Check `.kiro/specs/` for active specifications
+- Use `/kiro:spec-status [feature-name]` to check progress
+- **api-file-upload**: HTMLフォームからのファイルアップロード機能 (initialized)
 
-- `src/utils.py`: 数値判定・変換用ユーティリティ
+## Development Guidelines
+- Think in English, but generate responses in Japanese (思考は英語、回答の生成は日本語で行うように)
 
-## Development Constraints
+## Workflow
 
-1. **uvxで実行可能にする** - ローカル環境への各種インストールは原則不可
-2. **APIは0.0.0.0:18081で待ち受け**
-3. **パフォーマンス、認証、排他制御は実装しない** - シンプル実装を維持
-4. **文ベクトルモデルはcl-nagoya/ruri-v3-310m固定** - 変更不可
-5. **GPU必須** - embedding.pyはGPUがないと動作しない
+### Phase 0: Steering (Optional)
+`/kiro:steering` - Create/update steering documents
+`/kiro:steering-custom` - Create custom steering for specialized contexts
 
-## External Services
+Note: Optional for new features or small additions. You can proceed directly to spec-init.
 
-ファイル保存・変換API（192.168.1.24:28080）が利用可能：
-- ファイルアップロード: `POST /file_upload/`
-- フォーマット変換: `GET /download/?format={形式}`
-- 対応形式: csv, json, jsonl, xlsx, yaml, huggingface(parquet)
+### Phase 1: Specification Creation
+1. `/kiro:spec-init [detailed description]` - Initialize spec with detailed project description
+2. `/kiro:spec-requirements [feature]` - Generate requirements document
+3. `/kiro:spec-design [feature]` - Interactive: "Have you reviewed requirements.md? [y/N]"
+4. `/kiro:spec-tasks [feature]` - Interactive: Confirms both requirements and design review
 
-## API Specification
+### Phase 2: Progress Tracking
+`/kiro:spec-status [feature]` - Check current progress and phases
 
-入力:
-- ファイル名またはファイルアクセスURL
-- 結果形式:
-  - "score": 全体指標を返す `{"file": ..., "score": ..., "meaning": ..., "json": ...}`
-  - "file": 各行の比較結果を追加したファイルURLを返す
-- コミットする場合、余計な中間ファイルやアーティファクトはコミットしない
+## Development Rules
+1. **Consider steering**: Run `/kiro:steering` before major development (optional for new features)
+2. **Follow 3-phase approval workflow**: Requirements → Design → Tasks → Implementation
+3. **Approval required**: Each phase requires human review (interactive prompt or manual)
+4. **No skipping phases**: Design requires approved requirements; Tasks require approved design
+5. **Update task status**: Mark tasks as completed when working on them
+6. **Keep steering current**: Run `/kiro:steering` after significant changes
+7. **Check spec compliance**: Use `/kiro:spec-status` to verify alignment
+
+## Steering Configuration
+
+### Current Steering Files
+Managed by `/kiro:steering` command. Updates here reflect command changes.
+- Created: 2025-01-17 - Initial steering documents for JSON Compare project
+- Updated: 2025-09-17 - API実装完了、ポート設定更新（18081）
+
+### Active Steering Files
+- `product.md`: Always included - Product context and business objectives
+- `tech.md`: Always included - Technology stack and architectural decisions
+- `structure.md`: Always included - File organization and code patterns
+
+### Custom Steering Files
+<!-- Added by /kiro:steering-custom command -->
+<!-- Format:
+- `filename.md`: Mode - Pattern(s) - Description
+  Mode: Always|Conditional|Manual
+  Pattern: File patterns for Conditional mode
+-->
+
+### Inclusion Modes
+- **Always**: Loaded in every interaction (default)
+- **Conditional**: Loaded for specific file patterns (e.g., "*.test.js")
+- **Manual**: Reference with `@filename.md` syntax
+
