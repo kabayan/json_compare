@@ -324,6 +324,7 @@ class ResultFormatter:
         # 拡張メタデータ
         metadata = {
             "calculation_method": enhanced_result.method,
+            "comparison_method": enhanced_result.method,  # Requirement 8.1: 判定方式の明示的識別
             "processing_time": enhanced_result.processing_time,
             **self.metadata_collector.collect_system_metadata()
         }
@@ -674,6 +675,8 @@ def create_enhanced_result_from_strategy(
     # フォールバック情報の設定
     if strategy_result.method.endswith("_fallback"):
         enhanced_result.fallback_reason = strategy_result.metadata.get("fallback_reason", "Unknown")
-        enhanced_result.original_method = strategy_result.method.replace("_fallback", "")
+        # Task 4.2: メタデータのoriginal_methodを優先、なければmethod名から推測
+        enhanced_result.original_method = strategy_result.metadata.get("original_method",
+                                                                      strategy_result.method.replace("_fallback", ""))
 
     return enhanced_result
