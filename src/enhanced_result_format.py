@@ -438,16 +438,22 @@ class ResultFormatter:
                 self.format_file_output(result) for result in enhanced_results
             ]
 
-        return {
+        # 基本レスポンス構造
+        result = {
             "summary": {
                 "total_comparisons": total_comparisons,
                 "average_score": round(average_score, 4),
                 "total_processing_time": round(total_processing_time, 2),
                 "method_breakdown": method_breakdown
             },
-            "detailed_results": detailed_results,
             "metadata": self.metadata_collector.collect_system_metadata()
         }
+
+        # ファイル形式の場合のみ詳細結果を含める
+        if output_type == "file":
+            result["detailed_results"] = detailed_results
+
+        return result
 
 
 class CompatibilityLayer:

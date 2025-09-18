@@ -51,9 +51,9 @@ parameters:
     enable_thinking: false
 
 output_parsing:
-  score_pattern: 'スコア[：:]\s*([0-9.]+)'
-  category_pattern: 'カテゴリ[：:]\s*([^\n]+)'
-  reason_pattern: '理由[：:]\s*([^\n]+(?:\n[^\n*]+)*)'
+  score_pattern: '\*\*スコア\*\*[：:]\s*([-]?[0-9.０-９．]+)'
+  category_pattern: '\*\*カテゴリ\*\*[：:]\s*([^\n]+)'
+  reason_pattern: '\*\*理由\*\*[：:]\s*(.+?)(?=\n\S|$)'
 
 category_score_mapping:
   完全一致: 1.0
