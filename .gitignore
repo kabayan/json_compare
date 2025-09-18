@@ -40,6 +40,9 @@ uv.lock
 tests/*output*.json
 tests/test*.json
 tests/test*.jsonl
+test_file*.jsonl
+*.png
+ui_test.html
 
 # Data files (intermediate/generated)
 datas/merged.jsonl

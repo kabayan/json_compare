@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from .similarity import calculate_json_similarity, set_gpu_mode
+from .dual_file_extractor import DualFileExtractor
 
 
 def load_json_file(file_path: str) -> Any:
@@ -180,37 +181,50 @@ def format_score_output(file1: str, file2: str, score: float, details: Dict[str,
     }
 
 
-def main():
-    """メイン処理"""
-    parser = argparse.ArgumentParser(
-        description="JSON比較ツール - JSONLファイル内のinference1とinference2を比較"
-    )
+def dual_command(args):
+    """2ファイル比較コマンドの処理"""
+    try:
+        # GPU使用モードを設定
+        if args.gpu:
+            set_gpu_mode(True)
 
-    parser.add_argument(
-        "input_file",
-        help="入力JSONLファイルパス"
-    )
+        # DualFileExtractorを使用して比較
+        extractor = DualFileExtractor()
+        results = extractor.compare_dual_files(
+            args.file1,
+            args.file2,
+            args.column,
+            args.type,
+            args.gpu
+        )
 
-    parser.add_argument(
-        "-o", "--output",
-        help="出力ファイルパス (省略時は標準出力)"
-    )
+        # 結果出力
+        output_json = json.dumps(results, ensure_ascii=False, indent=2)
 
-    parser.add_argument(
-        "--type",
-        choices=["score", "file"],
-        default="score",
-        help="出力タイプ (default: score)"
-    )
+        if args.output:
+            # ファイルに出力
+            with open(args.output, 'w', encoding='utf-8') as f:
+                f.write(output_json)
+            print(f"結果を {args.output} に保存しました", file=sys.stderr)
+        else:
+            # 標準出力
+            print(output_json)
 
-    parser.add_argument(
-        "--gpu",
-        action="store_true",
-        help="GPUを使用する (default: CPU)"
-    )
+    except FileNotFoundError as e:
+        print(f"エラー: {e}", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as e:
+        print(f"エラー: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        import traceback
+        print(f"エラー: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
 
-    args = parser.parse_args()
 
+def compare_command(args):
+    """単一ファイル比較コマンドの処理（既存機能）"""
     try:
         # GPU使用モードを設定
         if args.gpu:
@@ -241,6 +255,47 @@ def main():
         import traceback
         print(f"エラー: {e}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
+
+
+def main():
+    """メイン処理"""
+    parser = argparse.ArgumentParser(
+        description="JSON比較ツール - JSONLファイル内のinference列を比較",
+        usage="json_compare [input_file] [options] | json_compare dual file1 file2 [options]"
+    )
+
+    # サブコマンドパーサーを作成
+    subparsers = parser.add_subparsers(dest='command', help='利用可能なコマンド')
+
+    # dual コマンド（2ファイル比較）
+    dual_parser = subparsers.add_parser('dual', help='2つのJSONLファイルの指定列を比較')
+    dual_parser.add_argument('file1', help='1つ目のJSONLファイル')
+    dual_parser.add_argument('file2', help='2つ目のJSONLファイル')
+    dual_parser.add_argument('--column', default='inference', help='比較する列名 (default: inference)')
+    dual_parser.add_argument('--type', choices=['score', 'file'], default='score',
+                            help='出力タイプ (default: score)')
+    dual_parser.add_argument('--gpu', action='store_true', help='GPUを使用する')
+    dual_parser.add_argument('-o', '--output', help='出力ファイルパス')
+    dual_parser.set_defaults(func=dual_command)
+
+    # 既存の単一ファイル処理を引数として受け付ける（後方互換性のため）
+    parser.add_argument('input_file', nargs='?', help='入力JSONLファイルパス')
+    parser.add_argument('-o', '--output', help='出力ファイルパス (省略時は標準出力)')
+    parser.add_argument('--type', choices=['score', 'file'], default='score',
+                       help='出力タイプ (default: score)')
+    parser.add_argument('--gpu', action='store_true', help='GPUを使用する (default: CPU)')
+
+    args = parser.parse_args()
+
+    # サブコマンドが指定された場合
+    if args.command == 'dual':
+        args.func(args)
+    # 既存の単一ファイル処理（後方互換性）
+    elif args.input_file:
+        compare_command(args)
+    else:
+        parser.print_help()
         sys.exit(1)
 
 

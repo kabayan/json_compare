@@ -22,6 +22,7 @@ from pydantic import BaseModel
 # 既存実装から関数をインポート
 from .__main__ import process_jsonl_file
 from .similarity import set_gpu_mode
+from .dual_file_extractor import DualFileExtractor
 
 # エラーハンドリングとロギング
 from .error_handler import ErrorHandler, ErrorRecovery, JsonRepair
@@ -585,6 +586,311 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=error_response)
 
 
+@app.post("/api/compare/dual")
+async def compare_dual_files(
+    request: Request,
+    file1: UploadFile = File(...),
+    file2: UploadFile = File(...),
+    column: str = Form("inference"),
+    type: str = Form("score"),
+    gpu: bool = Form(False)
+) -> Dict[str, Any]:
+    """
+    2つのJSONLファイルの指定列を比較する
+
+    Args:
+        request: FastAPIのRequestオブジェクト
+        file1: 1つ目のJSONLファイル
+        file2: 2つ目のJSONLファイル
+        column: 比較する列名（デフォルト: inference）
+        type: 出力タイプ（"score" または "file"）
+        gpu: GPU使用フラグ
+
+    Returns:
+        比較結果（scoreまたはfile形式）
+
+    Raises:
+        HTTPException: ファイルバリデーションエラー、処理エラーなど
+    """
+    start_time = time.time()
+    error_id = None
+    client_ip = request.client.host if request.client else None
+    temp_file1_path = None
+    temp_file2_path = None
+
+    try:
+        # システムリソースチェック
+        resource_ok, resource_msg = ErrorHandler.check_system_resources()
+        if not resource_ok:
+            error_id = ErrorHandler.generate_error_id()
+            error_response = ErrorHandler.format_user_error(
+                error_id=error_id,
+                error_type="insufficient_memory" if "メモリ" in resource_msg else "insufficient_storage",
+                details={"resource_check": resource_msg}
+            )
+            logger.log_error(
+                error_id=error_id,
+                error_type="resource_error",
+                error_message=resource_msg,
+                context={
+                    "file1": file1.filename,
+                    "file2": file2.filename,
+                    "client_ip": client_ip
+                }
+            )
+            raise HTTPException(status_code=503, detail=error_response)
+
+        # typeパラメータの検証
+        if type not in ["score", "file"]:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "Invalid type parameter", "detail": "type must be 'score' or 'file'"}
+            )
+
+        # ファイルの検証
+        for file_num, file in enumerate([file1, file2], 1):
+            if not file.filename:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": "No file provided", "detail": f"ファイル{file_num}が選択されていません"}
+                )
+
+            if not file.filename.lower().endswith('.jsonl'):
+                error_id = ErrorHandler.generate_error_id()
+                error_response = ErrorHandler.format_user_error(
+                    error_id=error_id,
+                    error_type="file_validation",
+                    details={"filename": file.filename, "expected": ".jsonl", "file_number": file_num}
+                )
+                logger.log_error(
+                    error_id=error_id,
+                    error_type="invalid_file_type",
+                    error_message=f"Invalid file type for file{file_num}: {file.filename}",
+                    context={"filename": file.filename, "client_ip": client_ip}
+                )
+                raise HTTPException(status_code=400, detail=error_response)
+
+        # ファイルサイズの確認（100MB制限）
+        MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+
+        file1_content = await file1.read()
+        if len(file1_content) > MAX_FILE_SIZE:
+            error_id = ErrorHandler.generate_error_id()
+            error_response = ErrorHandler.format_user_error(
+                error_id=error_id,
+                error_type="file_validation",
+                details={
+                    "file": file1.filename,
+                    "file_size_mb": len(file1_content) / (1024*1024),
+                    "limit_mb": 100
+                }
+            )
+            raise HTTPException(status_code=413, detail=error_response)
+
+        file2_content = await file2.read()
+        if len(file2_content) > MAX_FILE_SIZE:
+            error_id = ErrorHandler.generate_error_id()
+            error_response = ErrorHandler.format_user_error(
+                error_id=error_id,
+                error_type="file_validation",
+                details={
+                    "file": file2.filename,
+                    "file_size_mb": len(file2_content) / (1024*1024),
+                    "limit_mb": 100
+                }
+            )
+            raise HTTPException(status_code=413, detail=error_response)
+
+        # 一時ファイルの作成
+        temp_dir = tempfile.gettempdir()
+        unique_id1 = str(uuid.uuid4())
+        unique_id2 = str(uuid.uuid4())
+        temp_file1_path = os.path.join(temp_dir, f"json_compare_{unique_id1}.jsonl")
+        temp_file2_path = os.path.join(temp_dir, f"json_compare_{unique_id2}.jsonl")
+
+        # ファイル内容をデコードして一時ファイルに保存
+        try:
+            content1 = file1_content.decode('utf-8')
+            content2 = file2_content.decode('utf-8')
+        except UnicodeDecodeError as e:
+            error_id = ErrorHandler.generate_error_id()
+            error_response = ErrorHandler.format_user_error(
+                error_id=error_id,
+                error_type="file_validation",
+                details={"encoding": "UTF-8エンコーディングが必要です"}
+            )
+            raise HTTPException(status_code=400, detail=error_response)
+
+        # JSONLの検証と修復
+        repaired_data1, errors1, ok1 = ErrorHandler.validate_and_repair_jsonl(content1)
+        if not ok1:
+            error_id = ErrorHandler.generate_error_id()
+            error_response = ErrorHandler.format_user_error(
+                error_id=error_id,
+                error_type="file_validation",
+                details={
+                    "file": file1.filename,
+                    "errors": errors1[:5],
+                    "total_errors": len(errors1)
+                }
+            )
+            raise HTTPException(status_code=400, detail=error_response)
+
+        repaired_data2, errors2, ok2 = ErrorHandler.validate_and_repair_jsonl(content2)
+        if not ok2:
+            error_id = ErrorHandler.generate_error_id()
+            error_response = ErrorHandler.format_user_error(
+                error_id=error_id,
+                error_type="file_validation",
+                details={
+                    "file": file2.filename,
+                    "errors": errors2[:5],
+                    "total_errors": len(errors2)
+                }
+            )
+            raise HTTPException(status_code=400, detail=error_response)
+
+        # 修復済みデータを一時ファイルに保存
+        with open(temp_file1_path, 'w', encoding='utf-8') as f:
+            for item in repaired_data1:
+                f.write(json.dumps(item, ensure_ascii=False) + '\n')
+
+        with open(temp_file2_path, 'w', encoding='utf-8') as f:
+            for item in repaired_data2:
+                f.write(json.dumps(item, ensure_ascii=False) + '\n')
+
+        # GPUモードの設定
+        if gpu:
+            set_gpu_mode(True)
+        else:
+            set_gpu_mode(False)
+
+        # DualFileExtractorを使用して比較
+        extractor = DualFileExtractor()
+
+        # タイムアウト付きで処理を実行（60秒制限）
+        try:
+            loop = asyncio.get_event_loop()
+            result = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    extractor.compare_dual_files,
+                    temp_file1_path,
+                    temp_file2_path,
+                    column,
+                    type,
+                    gpu
+                ),
+                timeout=60.0
+            )
+
+            processing_time = time.time() - start_time
+
+            # メタデータを更新
+            if isinstance(result, dict) and '_metadata' in result:
+                result["_metadata"]["processing_time"] = f"{processing_time:.2f}秒"
+                result["_metadata"]["original_files"] = {
+                    "file1": file1.filename,
+                    "file2": file2.filename
+                }
+                if errors1 or errors2:
+                    result["_metadata"]["data_repairs"] = {
+                        "file1": len(errors1),
+                        "file2": len(errors2)
+                    }
+
+            # 成功をログに記録
+            logger.log_metrics({
+                "event": "dual_file_comparison_success",
+                "file1": file1.filename,
+                "file2": file2.filename,
+                "column": column,
+                "processing_time": processing_time,
+                "gpu_mode": gpu,
+                "client_ip": client_ip
+            })
+
+            # メトリクスを更新
+            metrics_collector.record_upload(
+                success=True,
+                processing_time=processing_time,
+                file_size=len(file1_content) + len(file2_content)
+            )
+
+            return result
+
+        except asyncio.TimeoutError:
+            error_id = ErrorHandler.generate_error_id()
+            error_response = ErrorHandler.format_user_error(
+                error_id=error_id,
+                error_type="timeout",
+                details={"timeout_seconds": 60}
+            )
+
+            logger.log_error(
+                error_id=error_id,
+                error_type="timeout_error",
+                error_message="Dual file comparison timeout",
+                context={
+                    "file1": file1.filename,
+                    "file2": file2.filename,
+                    "column": column,
+                    "gpu_mode": gpu,
+                    "client_ip": client_ip
+                }
+            )
+
+            metrics_collector.record_upload(
+                success=False,
+                processing_time=60.0,
+                file_size=len(file1_content) + len(file2_content)
+            )
+
+            raise HTTPException(status_code=504, detail=error_response)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_id = ErrorHandler.generate_error_id() if not error_id else error_id
+        processing_time = time.time() - start_time
+
+        error_response = ErrorHandler.format_user_error(
+            error_id=error_id,
+            error_type="processing_error",
+            details={"error": str(e)}
+        )
+
+        logger.log_error(
+            error_id=error_id,
+            error_type="dual_comparison_error",
+            error_message=str(e),
+            context={
+                "file1": file1.filename if file1 else None,
+                "file2": file2.filename if file2 else None,
+                "column": column,
+                "client_ip": client_ip
+            },
+            stack_trace=traceback.format_exc()
+        )
+
+        metrics_collector.record_upload(
+            success=False,
+            processing_time=processing_time,
+            file_size=0
+        )
+
+        raise HTTPException(status_code=500, detail=error_response)
+
+    finally:
+        # 一時ファイルのクリーンアップ
+        for temp_file in [temp_file1_path, temp_file2_path]:
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+
+
 @app.get("/ui", response_class=HTMLResponse)
 async def ui_form():
     """
@@ -855,6 +1161,65 @@ async def ui_form():
             box-shadow: 0 10px 25px rgba(72, 187, 120, 0.3);
         }
 
+        /* タブスタイル */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+
+        .tab-button {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            border-bottom: 3px solid transparent;
+            color: #666;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+
+        .tab-button:hover {
+            color: #667eea;
+        }
+
+        .tab-button.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .mode-form {
+            display: none;
+        }
+
+        .mode-form.active {
+            display: block;
+        }
+
+        .file-inputs-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 14px;
+            color: #333;
+            background: white;
+            transition: border-color 0.3s ease;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
         @media (max-width: 640px) {
             .container {
                 padding: 30px 20px;
@@ -862,6 +1227,14 @@ async def ui_form():
 
             h1 {
                 font-size: 24px;
+            }
+
+            .file-inputs-row {
+                grid-template-columns: 1fr;
+            }
+
+            .tabs {
+                flex-direction: column;
             }
         }
     </style>
@@ -871,7 +1244,18 @@ async def ui_form():
         <h1>🔍 JSON Compare</h1>
         <p class="subtitle">JSONLファイルの類似度を計算します</p>
 
-        <form id="uploadForm" enctype="multipart/form-data">
+        <!-- タブナビゲーション -->
+        <div class="tabs">
+            <button class="tab-button active" data-mode="single" onclick="switchMode('single')">
+                📄 単一ファイル比較
+            </button>
+            <button class="tab-button" data-mode="dual" onclick="switchMode('dual')">
+                📑 2ファイル比較
+            </button>
+        </div>
+
+        <!-- 単一ファイルモード -->
+        <form id="uploadForm" enctype="multipart/form-data" class="mode-form active" data-mode="single">
             <div class="form-group">
                 <label for="file">JSONLファイルを選択</label>
                 <div class="file-input-wrapper">
@@ -902,6 +1286,51 @@ async def ui_form():
             </button>
         </form>
 
+        <!-- 2ファイル比較モード -->
+        <form id="dualForm" enctype="multipart/form-data" class="mode-form" data-mode="dual">
+            <div class="form-group">
+                <label>比較するJSONLファイルを選択</label>
+                <div class="file-inputs-row">
+                    <div class="file-input-wrapper">
+                        <label for="file1" class="file-input-button" id="file1Label">
+                            📁 1つ目のファイル（.jsonl）
+                        </label>
+                        <input type="file" id="file1" name="file1" accept=".jsonl" required>
+                    </div>
+                    <div class="file-input-wrapper">
+                        <label for="file2" class="file-input-button" id="file2Label">
+                            📁 2つ目のファイル（.jsonl）
+                        </label>
+                        <input type="file" id="file2" name="file2" accept=".jsonl" required>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="column">比較する列名</label>
+                <input type="text" id="column" name="column" placeholder="inference" value="inference">
+            </div>
+
+            <div class="form-group">
+                <label for="type2">出力形式</label>
+                <select id="type2" name="type">
+                    <option value="score">スコア（全体平均）</option>
+                    <option value="file">ファイル（詳細結果）</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <div class="checkbox-wrapper">
+                    <input type="checkbox" id="gpu2" name="gpu" value="true">
+                    <label for="gpu2" class="checkbox-label">GPU を使用する（高速処理）</label>
+                </div>
+            </div>
+
+            <button type="submit" class="submit-button" id="dualSubmitButton">
+                🔀 2ファイルの列を比較
+            </button>
+        </form>
+
         <div class="loading" id="loading">
             <div class="spinner"></div>
             <p class="loading-text">処理中... しばらくお待ちください</p>
@@ -923,10 +1352,16 @@ async def ui_form():
 
     <script>
         const form = document.getElementById('uploadForm');
+        const dualForm = document.getElementById('dualForm');
         const fileInput = document.getElementById('file');
         const fileLabel = document.getElementById('fileLabel');
+        const file1Input = document.getElementById('file1');
+        const file1Label = document.getElementById('file1Label');
+        const file2Input = document.getElementById('file2');
+        const file2Label = document.getElementById('file2Label');
         const loading = document.getElementById('loading');
         const submitButton = document.getElementById('submitButton');
+        const dualSubmitButton = document.getElementById('dualSubmitButton');
         const resultContainer = document.getElementById('resultContainer');
         const resultTitle = document.getElementById('resultTitle');
         const resultContent = document.getElementById('resultContent');
@@ -935,8 +1370,35 @@ async def ui_form():
         const downloadCsvButton = document.getElementById('downloadCsvButton');
         let lastResult = null;
         let lastType = 'score';
+        let currentMode = 'single';
 
-        // ファイル選択時の表示更新
+        // モード切り替え関数
+        function switchMode(mode) {
+            currentMode = mode;
+
+            // タブボタンのアクティブ状態を更新
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                if (btn.dataset.mode === mode) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+
+            // フォームの表示切り替え
+            document.querySelectorAll('.mode-form').forEach(form => {
+                if (form.dataset.mode === mode) {
+                    form.classList.add('active');
+                } else {
+                    form.classList.remove('active');
+                }
+            });
+
+            // 結果をクリア
+            resultContainer.classList.remove('active');
+        }
+
+        // 単一ファイル選択時の表示更新
         fileInput.addEventListener('change', function() {
             if (this.files && this.files.length > 0) {
                 const fileName = this.files[0].name;
@@ -948,7 +1410,30 @@ async def ui_form():
             }
         });
 
-        // フォーム送信処理
+        // 2ファイル選択時の表示更新
+        file1Input.addEventListener('change', function() {
+            if (this.files && this.files.length > 0) {
+                const fileName = this.files[0].name;
+                file1Label.textContent = `✅ ${fileName}`;
+                file1Label.classList.add('file-selected');
+            } else {
+                file1Label.textContent = '📁 1つ目のファイル（.jsonl）';
+                file1Label.classList.remove('file-selected');
+            }
+        });
+
+        file2Input.addEventListener('change', function() {
+            if (this.files && this.files.length > 0) {
+                const fileName = this.files[0].name;
+                file2Label.textContent = `✅ ${fileName}`;
+                file2Label.classList.add('file-selected');
+            } else {
+                file2Label.textContent = '📁 2つ目のファイル（.jsonl）';
+                file2Label.classList.remove('file-selected');
+            }
+        });
+
+        // 単一ファイルフォーム送信処理
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -992,7 +1477,7 @@ async def ui_form():
                     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
                     downloadJsonButton.download = `result_${timestamp}.json`;
 
-                    // CSVダウンロードボタン - CSVへの変換をクライアントサイドで実装
+                    // CSVダウンロードボタン
                     downloadCsvButton.onclick = async (e) => {
                         e.preventDefault();
                         const csvContent = convertToCSV(data, lastType);
@@ -1030,6 +1515,90 @@ async def ui_form():
             }
         });
 
+        // 2ファイルフォーム送信処理
+        dualForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const formData = new FormData(dualForm);
+
+            // チェックボックスの値を調整
+            if (!document.getElementById('gpu2').checked) {
+                formData.set('gpu', 'false');
+            }
+
+            // UI状態の更新
+            dualSubmitButton.disabled = true;
+            loading.classList.add('active');
+            resultContainer.classList.remove('active');
+
+            try {
+                const response = await fetch('/api/compare/dual', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // 成功時の処理
+                    lastResult = data;
+                    resultTitle.textContent = '✅ 2ファイル比較完了';
+                    resultContent.textContent = JSON.stringify(data, null, 2);
+                    resultContainer.classList.remove('error');
+                    resultContainer.classList.add('active');
+
+                    // ダウンロードボタンの設定
+                    lastType = formData.get('type');
+                    downloadButtons.style.display = 'flex';
+
+                    // JSONダウンロードボタン
+                    const jsonBlob = new Blob([JSON.stringify(data, null, 2)],
+                                         { type: 'application/json' });
+                    const jsonUrl = URL.createObjectURL(jsonBlob);
+                    downloadJsonButton.href = jsonUrl;
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                    downloadJsonButton.download = `dual_result_${timestamp}.json`;
+
+                    // CSVダウンロードボタン
+                    downloadCsvButton.onclick = async (e) => {
+                        e.preventDefault();
+                        const csvContent = convertToCSV(data, lastType);
+                        const csvBlob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                        const csvUrl = URL.createObjectURL(csvBlob);
+                        const a = document.createElement('a');
+                        a.href = csvUrl;
+                        a.download = `dual_result_${timestamp}.csv`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(csvUrl);
+                    };
+
+                } else {
+                    // エラー時の処理
+                    resultTitle.textContent = '❌ エラーが発生しました';
+                    resultContent.textContent = data.detail ?
+                        (typeof data.detail === 'object' ?
+                            `${data.detail.error || 'Error'}: ${data.detail.detail || JSON.stringify(data.detail)}` :
+                            data.detail) :
+                        JSON.stringify(data, null, 2);
+                    resultContainer.classList.add('error');
+                    resultContainer.classList.add('active');
+                    downloadButtons.style.display = 'none';
+                }
+            } catch (error) {
+                // ネットワークエラーなど
+                resultTitle.textContent = '❌ 通信エラー';
+                resultContent.textContent = `エラー: ${error.message}`;
+                resultContainer.classList.add('error');
+                resultContainer.classList.add('active');
+                downloadButtons.style.display = 'none';
+            } finally {
+                loading.classList.remove('active');
+                dualSubmitButton.disabled = false;
+            }
+        });
+
         // CSV変換関数
         function convertToCSV(data, type) {
             let csv = '';
@@ -1037,21 +1606,58 @@ async def ui_form():
             if (type === 'score') {
                 // スコアモードの場合
                 csv = '項目,値\\n';
-                if (data.overall_similarity !== undefined) {
-                    csv += `全体類似度,${data.overall_similarity.toFixed(4)}\\n`;
+
+                // 基本スコア
+                if (data.score !== undefined) {
+                    csv += `類似度スコア,${data.score}\\n`;
                 }
+                if (data.meaning !== undefined) {
+                    csv += `意味,${data.meaning}\\n`;
+                }
+                if (data.total_lines !== undefined) {
+                    csv += `総行数,${data.total_lines}\\n`;
+                }
+
+                // JSON詳細
+                if (data.json) {
+                    csv += `\\n詳細\\n`;
+                    csv += `フィールド一致率,${data.json.field_match_ratio || 0}\\n`;
+                    csv += `値類似度,${data.json.value_similarity || 0}\\n`;
+                    csv += `最終スコア,${data.json.final_score || 0}\\n`;
+                }
+
+                // 統計情報
                 if (data.statistics) {
                     const stats = data.statistics;
+                    csv += `\\n統計\\n`;
                     csv += `平均類似度,${(stats.mean || 0).toFixed(4)}\\n`;
                     csv += `中央値,${(stats.median || 0).toFixed(4)}\\n`;
                     csv += `標準偏差,${(stats.std_dev || 0).toFixed(4)}\\n`;
                     csv += `最小値,${(stats.min || 0).toFixed(4)}\\n`;
                     csv += `最大値,${(stats.max || 0).toFixed(4)}\\n`;
                 }
+
+                // メタデータ
                 if (data._metadata) {
-                    csv += '\\n';
+                    csv += `\\nメタデータ\\n`;
                     csv += `処理時間,${data._metadata.processing_time || 'N/A'}\\n`;
-                    csv += `元ファイル名,${data._metadata.original_filename || 'N/A'}\\n`;
+
+                    // 単一ファイルの場合
+                    if (data._metadata.original_filename) {
+                        csv += `元ファイル名,${data._metadata.original_filename}\\n`;
+                    }
+
+                    // 2ファイル比較の場合
+                    if (data._metadata.source_files) {
+                        csv += `ファイル1,${data._metadata.source_files.file1}\\n`;
+                        csv += `ファイル2,${data._metadata.source_files.file2}\\n`;
+                    }
+                    if (data._metadata.column_compared) {
+                        csv += `比較列,${data._metadata.column_compared}\\n`;
+                    }
+                    if (data._metadata.rows_compared !== undefined) {
+                        csv += `比較行数,${data._metadata.rows_compared}\\n`;
+                    }
                     csv += `GPU使用,${data._metadata.gpu_used ? '有' : '無'}\\n`;
                 }
             } else if (type === 'file') {
@@ -1061,19 +1667,27 @@ async def ui_form():
                     const headers = [];
                     const firstItem = data[0];
                     if ('line_number' in firstItem) headers.push('行番号');
-                    if ('similarity' in firstItem) headers.push('類似度');
+                    if ('similarity_score' in firstItem) headers.push('類似度スコア');
                     if ('inference1' in firstItem) headers.push('推論1');
                     if ('inference2' in firstItem) headers.push('推論2');
+                    if ('similarity_details' in firstItem) {
+                        headers.push('フィールド一致率');
+                        headers.push('値類似度');
+                    }
 
                     csv = headers.join(',') + '\\n';
 
                     // データ行の生成
-                    data.forEach(item => {
+                    data.forEach((item, index) => {
                         const row = [];
-                        if ('line_number' in item) row.push(item.line_number);
-                        if ('similarity' in item) row.push(item.similarity.toFixed(4));
+                        if ('line_number' in item) row.push(item.line_number || index + 1);
+                        if ('similarity_score' in item) row.push((item.similarity_score || 0).toFixed(4));
                         if ('inference1' in item) row.push(`"${String(item.inference1).replace(/"/g, '""')}"`);
                         if ('inference2' in item) row.push(`"${String(item.inference2).replace(/"/g, '""')}"`);
+                        if ('similarity_details' in item) {
+                            row.push((item.similarity_details.field_match_ratio || 0).toFixed(4));
+                            row.push((item.similarity_details.value_similarity || 0).toFixed(4));
+                        }
                         csv += row.join(',') + '\\n';
                     });
                 }
@@ -1082,6 +1696,9 @@ async def ui_form():
             // BOMを追加（Excelでの文字化け防止）
             return '\uFEFF' + csv;
         }
+
+        // switchMode関数をグローバルに設定
+        window.switchMode = switchMode;
 
         // ページロード時の初期化
         document.addEventListener('DOMContentLoaded', () => {
