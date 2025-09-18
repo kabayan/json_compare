@@ -136,6 +136,10 @@ class LLMClient:
         self._client: Optional[httpx.AsyncClient] = None
         self.metrics_collector = metrics_collector
 
+        # Task 2.2: 連続失敗時のフォールバック管理
+        self.consecutive_failures = 0
+        self.should_fallback_to_embedding = False
+
     async def __aenter__(self):
         """非同期コンテキストマネージャーの開始"""
         await self._ensure_client()
@@ -164,6 +168,17 @@ class LLMClient:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.config.auth_token}"
         }
+
+    def _check_consecutive_failures(self) -> None:
+        """
+        連続失敗回数をチェックしてフォールバック推奨フラグを設定（Requirement 6.3）
+        """
+        if self.consecutive_failures >= 3:
+            self.should_fallback_to_embedding = True
+            logger.warning(
+                f"LLM API呼び出しが{self.consecutive_failures}回連続で失敗しました。"
+                "埋め込みベースモードへのフォールバックを推奨します。"
+            )
 
     async def _retry_with_backoff(self, func, *args, **kwargs):
         """指数バックオフ付きリトライ"""
@@ -229,13 +244,40 @@ class LLMClient:
         request_data.update(kwargs)
 
         try:
-            # APIを呼び出し（リトライ付き）
-            response = await self._retry_with_backoff(
-                self._client.post,
-                self.config.api_url,
-                json=request_data,
-                headers=self._get_headers()
-            )
+            # Task 2.2: 5秒以上の応答時間でプログレスバー表示（Requirement 6.2）
+            start_time = time.time()
+
+            # プログレスバー付きAPI呼び出しを作成
+            async def api_call_with_progress():
+                response_task = self._retry_with_backoff(
+                    self._client.post,
+                    self.config.api_url,
+                    json=request_data,
+                    headers=self._get_headers()
+                )
+
+                # 5秒待機してから応答をチェック
+                try:
+                    return await asyncio.wait_for(response_task, timeout=5.0)
+                except asyncio.TimeoutError:
+                    # 5秒を超えた場合はプログレスバーを表示
+                    async with tqdm(desc="LLM処理中...", unit="秒") as progress:
+                        # 新しいタスクを作成（再利用問題を回避）
+                        new_response_task = self._retry_with_backoff(
+                            self._client.post,
+                            self.config.api_url,
+                            json=request_data,
+                            headers=self._get_headers()
+                        )
+                        try:
+                            response = await new_response_task
+                            progress.set_description("LLM処理完了")
+                            return response
+                        except Exception:
+                            progress.set_description("LLM処理エラー")
+                            raise
+
+            response = await api_call_with_progress()
 
             # ステータスコードチェック
             if response.status_code != 200:
@@ -269,9 +311,15 @@ class LLMClient:
                     error=None
                 )
 
+            # 成功時は連続失敗カウンターをリセット
+            self.consecutive_failures = 0
             return llm_response
 
         except httpx.ConnectError as e:
+            # Task 2.2: 連続失敗カウンターの更新
+            self.consecutive_failures += 1
+            self._check_consecutive_failures()
+
             # メトリクス記録（接続エラー）
             if self.metrics_collector:
                 self.metrics_collector.end_api_call(
@@ -280,8 +328,14 @@ class LLMClient:
                     response_tokens=0,
                     error=f"接続エラー: {e}"
                 )
-            raise LLMClientError(f"vLLM APIへの接続に失敗しました: {e}")
+            # Task 2.2: フォールバック情報を含むエラーメッセージ（Requirement 1.4）
+            fallback_msg = "埋め込みベースの計算にフォールバックを検討してください。"
+            raise LLMClientError(f"vLLM APIへの接続に失敗しました: {e}。{fallback_msg}")
         except httpx.TimeoutException as e:
+            # Task 2.2: 連続失敗カウンターの更新
+            self.consecutive_failures += 1
+            self._check_consecutive_failures()
+
             # メトリクス記録（タイムアウトエラー）
             if self.metrics_collector:
                 self.metrics_collector.end_api_call(
@@ -290,8 +344,14 @@ class LLMClient:
                     response_tokens=0,
                     error=f"タイムアウト: {e}"
                 )
-            raise LLMClientError(f"APIリクエストがタイムアウトしました: {e}")
+            # Task 2.2: フォールバック情報を含むエラーメッセージ（Requirement 1.4）
+            fallback_msg = "埋め込みベースの計算にフォールバックを検討してください。"
+            raise LLMClientError(f"APIリクエストがタイムアウトしました: {e}。{fallback_msg}")
         except json.JSONDecodeError as e:
+            # Task 2.2: 連続失敗カウンターの更新
+            self.consecutive_failures += 1
+            self._check_consecutive_failures()
+
             # メトリクス記録（JSON解析エラー）
             if self.metrics_collector:
                 self.metrics_collector.end_api_call(
@@ -302,6 +362,10 @@ class LLMClient:
                 )
             raise LLMClientError(f"APIレスポンスの解析に失敗しました: {e}")
         except Exception as e:
+            # Task 2.2: 連続失敗カウンターの更新
+            self.consecutive_failures += 1
+            self._check_consecutive_failures()
+
             # メトリクス記録（その他のエラー）
             if self.metrics_collector:
                 self.metrics_collector.end_api_call(
