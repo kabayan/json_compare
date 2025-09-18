@@ -4,13 +4,29 @@ JSONLファイル内の`inference1`と`inference2`フィールドの類似度を
 
 ## 特徴
 
+### コア機能
 - 🚀 **uvx対応** - インストール不要で即実行可能
 - 🧠 **日本語特化** - cl-nagoya/ruri-v3-310mモデルによる高精度な日本語処理
 - 💻 **CPU/GPU両対応** - デフォルトCPUで軽量動作、GPUオプションで高速処理
 - 📊 **2つの出力形式** - 全体平均（score）と各行詳細（file）
-- 🌐 **Web UI/API対応** - ブラウザからのファイルアップロードとREST API
-- 📈 **エラーハンドリング** - 自動JSONL修復機能とエラーID生成
-- 📝 **詳細ログ** - アクセス、エラー、メトリクスの3種類のログ
+
+### Web UI & API機能（新機能）
+- 🌐 **直感的なWeb UI** - ドラッグ&ドロップ対応のモダンなインターフェース
+- 🔄 **REST API** - プログラマティックなアクセス用の完全なAPI実装
+- 📥 **マルチフォーマット対応** - JSON/CSV形式でのダウンロード
+- ⚡ **並列処理対応** - 複数のファイルアップロードを同時処理
+
+### 信頼性機能
+- 🔧 **自動JSONL修復** - 不正なJSON行を自動的に修復
+- 🆔 **エラーID生成** - トラブルシューティング用の一意のエラーID
+- 💡 **改善提案** - エラー時に具体的な解決策を提示
+- 🔍 **システムリソース監視** - メモリ/ディスク不足の事前検知
+
+### 運用機能
+- 📝 **構造化ログ** - JSON形式の3層ログシステム（アクセス/エラー/メトリクス）
+- 📊 **メトリクス収集** - アップロード成功率、処理時間などの統計
+- 🔄 **ログローテーション** - 10MB制限での自動ローテーション
+- 🛡️ **包括的エラーハンドリング** - ユーザーフレンドリーなエラーメッセージ
 
 ## インストール
 
@@ -106,7 +122,7 @@ uvx --from . json_compare data.jsonl --type file -o details.json
 uvx --from . json_compare data.jsonl --type score --gpu
 ```
 
-## Web UI とAPI
+## Web UI とAPI（新機能）
 
 ### Web UIの起動
 
@@ -119,14 +135,17 @@ http://localhost:18081/ui
 ```
 
 Web UIでは以下の機能が利用可能：
-- JSONLファイルのドラッグ＆ドロップまたは選択
-- 出力形式の選択（スコア/ファイル詳細）
-- GPU使用の有無選択
-- 結果のJSON/CSV形式でのダウンロード
+- 📁 JSONLファイルのドラッグ＆ドロップまたは選択
+- 🎯 出力形式の選択（スコア/ファイル詳細）
+- ⚡ GPU使用の有無選択
+- 💾 結果のJSON/CSV形式でのダウンロード
+- 📊 リアルタイムの処理状況表示
+- 🔄 エラー時の自動リトライ提案
+- 📈 処理統計の表示（処理時間、ファイルサイズなど）
 
 ### REST APIエンドポイント
 
-#### 1. ファイルアップロード
+#### 1. ファイルアップロード（メインエンドポイント）
 
 ```bash
 curl -X POST http://localhost:18081/upload \
@@ -228,6 +247,7 @@ JSONLファイル（1行1JSON）で、各行に`inference1`と`inference2`フィ
 
 ## 依存関係
 
+### コア依存関係
 - Python 3.8+
 - transformers 4.30+
 - torch 2.0+
@@ -236,7 +256,38 @@ JSONLファイル（1行1JSON）で、各行に`inference1`と`inference2`フィ
 - sentencepiece 0.1.99+
 - protobuf 3.20+
 
+### API/Web UI依存関係
+- FastAPI 0.100+
+- uvicorn[standard] 0.23+
+- python-multipart 0.0.5+
+- psutil 5.9+ （システムメトリクス用）
+
+### 開発/テスト依存関係
+- pytest 8.0+
+- playwright 1.49+ （E2Eテスト用）
+
 ## トラブルシューティング
+
+### API/Web UI関連
+
+#### ポート18081が使用中
+```bash
+# 別のポートで起動
+uv run uvicorn src.api:app --host 0.0.0.0 --port 8000
+```
+
+#### ファイルアップロードサイズ制限（100MB）を超える
+ファイルを分割するか、以下のように制限を変更：
+```python
+# src/api.py のMAX_FILE_SIZE定数を変更
+MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
+```
+
+#### JSONLファイルの自動修復が失敗する
+エラーメッセージに従って手動で修正するか、以下を確認：
+- 各行が独立したJSONオブジェクトであること
+- inference1とinference2フィールドが存在すること
+- UTF-8エンコーディングであること
 
 ### CUDA out of memoryエラー
 
@@ -261,6 +312,31 @@ MIT License
 ## 開発者向け
 
 ### テスト実行
+
+#### 統合テストの実行
+```bash
+# APIサーバーを起動
+uv run uvicorn src.api:app --host 0.0.0.0 --port 18081 &
+
+# 統合テストスイート実行
+uv run python tests/test_integration.py
+```
+
+#### Web UIテスト（Playwright）
+```bash
+# Playwrightをインストール
+uv run playwright install chromium
+
+# テスト実行
+uv run pytest tests/test_ui_playwright_improved.py -xvs
+```
+
+#### エラーハンドリングテスト
+```bash
+uv run python tests/test_error_handling.py
+```
+
+### CLIテスト
 
 ```bash
 # 開発環境での実行
@@ -296,8 +372,37 @@ json_compare/
 
 ログファイルは `/tmp/json_compare/logs/` に保存されます：
 
-- `access.log` - すべてのAPIリクエスト
-- `error.log` - エラー情報とスタックトレース
-- `metrics.log` - システムメトリクスと統計
+#### access.log
+- すべてのHTTPリクエスト
+- リクエストID、メソッド、パス、ステータスコード
+- クライアントIP、処理時間
 
-ログは自動的にローテーション（10MB制限）され、JSON形式で構造化されています。
+#### error.log
+- エラーID付きのエラー情報
+- スタックトレース
+- リカバリ提案
+
+#### metrics.log
+- アップロード成功/失敗率
+- 平均処理時間
+- システムリソース使用状況（CPU、メモリ、ディスク）
+
+ログ形式の例：
+```json
+{
+  "timestamp": "2025-09-17T12:34:56.789Z",
+  "event": "upload_completed",
+  "filename": "data.jsonl",
+  "file_size": 1234567,
+  "processing_time": 1.23,
+  "gpu_mode": false,
+  "result": "success"
+}
+```
+
+### パフォーマンス最適化
+
+- **並列処理**: 最大5つの同時アップロードをサポート
+- **メモリ効率**: ストリーミング処理による大容量ファイル対応
+- **キャッシュ**: モデルの事前ロードによる高速化
+- **エラーリカバリ**: 自動リトライと部分的な処理の再開
