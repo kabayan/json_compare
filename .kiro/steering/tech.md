@@ -5,6 +5,7 @@
 - **Pattern**: Command-line interface with modular Python architecture
 - **Deployment**: Standalone executable via uvx or local Python environment
 - **Processing Model**: Batch processing with optional GPU acceleration
+- **Computation Strategy**: Strategy pattern for embedding-based or LLM-based processing
 
 ## Core Technologies
 
@@ -19,6 +20,13 @@
 - **Model**: cl-nagoya/ruri-v3-310m (Japanese embedding model)
 - **SentencePiece**: 0.1.99+ (Tokenization)
 - **SciPy**: 1.10+ (Scientific computing, similarity calculations)
+
+### LLM Integration Stack
+- **vLLM API**: External LLM inference service support
+- **httpx**: 0.25+ (Async HTTP client for LLM API calls)
+- **aiohttp**: Async HTTP client library
+- **YAML**: PyYAML for prompt template management
+- **Supported Models**: Qwen, Llama, and other vLLM-compatible models
 
 ### Data Processing
 - **json-repair**: 0.50.1 (Automatic JSON fixing)
@@ -94,11 +102,17 @@ uvx --from . json_compare <input.jsonl> [options]
 # 2ファイル比較
 json_compare dual file1.jsonl file2.jsonl --type score
 
+# LLMベースの類似度判定
+json_compare <input.jsonl> --llm --model qwen3-14b-awq
+
 # Start API/Web UI server
-uv run uvicorn src.api:app --host 0.0.0.0 --port 18081
+uv run json_compare_api
 
 # With GPU support
 uvx --from . json_compare <input.jsonl> --gpu
+
+# LLMとGPU両方を使用
+json_compare <input.jsonl> --gpu --llm
 ```
 
 ### Build & Distribution
@@ -129,6 +143,14 @@ python3 utils/fix_jsonl_format.py --validate data.jsonl
 - **TORCH_DEVICE**: Force specific device (cpu/cuda)
 - **HF_HOME**: Hugging Face home directory
 
+### LLM Configuration
+- **VLLM_API_URL**: vLLM API endpoint URL
+- **VLLM_API_KEY**: API key for vLLM service (if required)
+- **LLM_MODEL_NAME**: Default LLM model to use
+- **LLM_TEMPERATURE**: Generation temperature (default: 0.2)
+- **LLM_MAX_TOKENS**: Maximum tokens for generation (default: 64)
+- **PROMPT_TEMPLATE_DIR**: Directory for custom prompt templates
+
 ### API Configuration (when using FastAPI)
 - **API_HOST**: API server host (default: 0.0.0.0)
 - **API_PORT**: API server port (default: 18081)
@@ -137,6 +159,8 @@ python3 utils/fix_jsonl_format.py --validate data.jsonl
 ### Performance Tuning
 - **OMP_NUM_THREADS**: OpenMP thread count for CPU processing
 - **CUDA_VISIBLE_DEVICES**: GPU device selection
+- **LLM_CACHE_SIZE**: Maximum size of LLM response cache
+- **LLM_BATCH_SIZE**: Batch size for LLM processing
 
 ## Port Configuration
 - **API Server**: 18081 (default FastAPI port)
@@ -189,9 +213,11 @@ python3 utils/fix_jsonl_format.py --validate data.jsonl
    - System resource usage (CPU/Memory/Disk)
 
 ## Security Considerations
-- No external API calls except model download (first run only)
-- Local processing of all data
+- External API calls: Model download (first run) and vLLM API (when LLM mode enabled)
+- Local processing of embedding-based comparisons
 - No data persistence unless explicitly saved
 - Sandboxed execution via uvx
 - File size limits: 100MB default for uploads
 - Request validation with pydantic
+- API key management for vLLM service (environment variable)
+- LLM response caching to minimize external API calls
