@@ -6,8 +6,11 @@
 json_compare/
 ├── src/                    # Main source code
 ├── tests/                  # Test files
+├── utils/                  # Utility scripts
+├── logs/                   # Log files (auto-created)
 ├── docs/                   # Documentation
 ├── datas/                  # Data files (gitignored)
+├── claudecodeui/           # Web UI assets (if present)
 ├── .kiro/                  # Kiro spec-driven development
 │   ├── steering/          # Project steering documents
 │   └── specs/             # Feature specifications
@@ -15,7 +18,9 @@ json_compare/
 │   └── commands/          # Custom commands
 ├── .venv/                  # Python virtual environment
 ├── pyproject.toml          # Package configuration
+├── requirements.txt        # Python dependencies
 ├── README.md              # User documentation
+├── WEB_UI_README.md       # Web UI documentation
 ├── CLAUDE.md              # Claude Code instructions
 └── init.sh                # Environment setup script
 ```
@@ -30,7 +35,9 @@ src/
 ├── similarity.py          # Core similarity calculation logic
 ├── embedding.py           # Embedding model management
 ├── utils.py               # Utility functions
-├── api.py                 # FastAPI server (optional)
+├── api.py                 # FastAPI server and Web UI
+├── error_handler.py       # Error handling and user-friendly messages
+├── logger.py              # Structured logging system
 └── archives/              # Archived/deprecated code
     └── merge_jsonl.py     # Legacy JSONL merging utility
 ```
@@ -38,11 +45,30 @@ src/
 ### Tests (`tests/`)
 ```
 tests/
-├── test_similarity.py     # Similarity calculation tests
-├── test_embedding.py      # Embedding model tests
-├── test_utils.py          # Utility function tests
-└── fixtures/              # Test data fixtures
-    └── sample.jsonl       # Sample test data
+├── test_similarity.py           # Similarity calculation tests
+├── test_embedding.py            # Embedding model tests
+├── test_utils.py                # Utility function tests
+├── test_integration.py          # API integration tests
+├── test_error_handling.py       # Error handling tests
+├── test_ui_playwright.py        # Web UI E2E tests
+├── test_ui_playwright_improved.py # Enhanced Web UI tests
+└── fixtures/                    # Test data fixtures
+    └── sample.jsonl            # Sample test data
+```
+
+### Utilities (`utils/`)
+```
+utils/
+├── fix_jsonl_format.py     # JSONL format correction tool
+└── README.md               # Utility documentation
+```
+
+### Logs (`/tmp/json_compare/logs/`)
+```
+logs/                       # Auto-created at runtime
+├── access.log             # HTTP request logs
+├── error.log              # Error logs with IDs
+└── metrics.log            # Performance metrics
 ```
 
 ### Documentation (`docs/`)
@@ -75,14 +101,19 @@ docs/
 - **__main__.py**: CLI argument parsing and command orchestration
 - **similarity.py**: Business logic for JSON comparison and scoring
 - **embedding.py**: ML model loading and vector generation
-- **utils.py**: Shared utilities (JSON parsing, file I/O)
-- **api.py**: REST API endpoints and request handling
+- **utils.py**: Shared utilities (JSON parsing, file I/O, progress bars)
+- **api.py**: REST API endpoints, Web UI serving, file upload handling
+- **error_handler.py**: User-friendly error messages, error IDs, recovery suggestions
+- **logger.py**: Structured JSON logging with rotation and metrics tracking
 
 ### Layered Architecture
-1. **Presentation Layer**: CLI (`__main__.py`) and API (`api.py`)
+1. **Presentation Layer**: CLI (`__main__.py`), API (`api.py`), Web UI
 2. **Business Logic**: Similarity calculation (`similarity.py`)
 3. **Service Layer**: Embedding generation (`embedding.py`)
-4. **Utility Layer**: Common functions (`utils.py`)
+4. **Infrastructure Layer**:
+   - Error handling (`error_handler.py`)
+   - Logging (`logger.py`)
+   - Utilities (`utils.py`)
 
 ### Data Flow
 ```
@@ -156,10 +187,13 @@ Each module handles one primary concern:
 - Model caching to avoid re-downloads
 
 ### Testing Strategy
-- Unit tests for each module
-- Integration tests for CLI commands
+- Unit tests for each module (`test_*.py`)
+- Integration tests for API endpoints (`test_integration.py`)
+- E2E tests for Web UI (`test_ui_playwright*.py`)
+- Error handling tests (`test_error_handling.py`)
 - Fixtures for consistent test data
 - Mock external dependencies (model downloads)
+- Automated testing with pytest and playwright
 
 ### Configuration Management
 - `pyproject.toml` for package metadata
@@ -173,8 +207,11 @@ Each module handles one primary concern:
 1. Create spec in `.kiro/specs/[feature]/`
 2. Implement in appropriate module
 3. Add tests in `tests/`
+   - Unit tests for core logic
+   - Integration tests for API
+   - Playwright tests for Web UI
 4. Update documentation
-5. Test via CLI before committing
+5. Test all interfaces (CLI, API, Web UI) before committing
 
 ### Code Review Checklist
 - [ ] Follows naming conventions

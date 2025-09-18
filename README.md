@@ -175,7 +175,7 @@ json_compare dual file1.jsonl file2.jsonl --type file -o comparison.json
 
 ```bash
 # APIサーバーを起動（ポート18081）
-uv run uvicorn src.api:app --host 0.0.0.0 --port 18081
+uv run json_compare_api
 
 # ブラウザでアクセス
 http://localhost:18081/ui
@@ -198,7 +198,7 @@ Web UIでは以下の機能が利用可能：
 #### 1. 単一ファイルアップロード（従来機能）
 
 ```bash
-curl -X POST http://localhost:18081/upload \
+curl -X POST http://localhost:18081/api/compare/single \
   -F "file=@data.jsonl" \
   -F "type=score" \
   -F "gpu=false"
@@ -425,7 +425,7 @@ python3 utils/fix_jsonl_format.py --validate data.jsonl
 #### 統合テストの実行
 ```bash
 # APIサーバーを起動
-uv run uvicorn src.api:app --host 0.0.0.0 --port 18081 &
+uv run json_compare_api &
 
 # 統合テストスイート実行
 uv run python tests/test_integration.py

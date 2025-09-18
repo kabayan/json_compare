@@ -293,7 +293,7 @@ async def ui_page():
     return HTMLResponse(content=HTML_TEMPLATE)
 
 
-@app.post("/upload")
+@app.post("/api/compare/single")
 async def mock_upload(file: UploadFile = File(...)):
     """単一ファイルアップロードのモック"""
     return {

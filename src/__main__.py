@@ -285,8 +285,17 @@ def main():
         usage="json_compare [input_file] [options] | json_compare dual file1 file2 [options]"
     )
 
-    # サブコマンドパーサーを作成
-    subparsers = parser.add_subparsers(dest='command', help='利用可能なコマンド')
+    # サブコマンドパーサーを作成（サブコマンドはオプショナル）
+    subparsers = parser.add_subparsers(dest='command', help='利用可能なコマンド', required=False)
+
+    # compare コマンド（単一ファイル比較）
+    compare_parser = subparsers.add_parser('compare', help='単一JSONLファイル内のinference1とinference2を比較')
+    compare_parser.add_argument('input_file', help='入力JSONLファイルパス')
+    compare_parser.add_argument('--type', choices=['score', 'file'], default='score',
+                               help='出力タイプ (default: score)')
+    compare_parser.add_argument('--gpu', action='store_true', help='GPUを使用する')
+    compare_parser.add_argument('-o', '--output', help='出力ファイルパス')
+    compare_parser.set_defaults(func=compare_command)
 
     # dual コマンド（2ファイル比較）
     dual_parser = subparsers.add_parser('dual', help='2つのJSONLファイルの指定列を比較')
@@ -306,17 +315,35 @@ def main():
                        help='出力タイプ (default: score)')
     parser.add_argument('--gpu', action='store_true', help='GPUを使用する (default: CPU)')
 
-    args = parser.parse_args()
-
-    # サブコマンドが指定された場合
-    if args.command == 'dual':
-        args.func(args)
-    # 既存の単一ファイル処理（後方互換性）
-    elif args.input_file:
-        compare_command(args)
-    else:
+    # 引数が存在しない場合、ヘルプを表示
+    if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
+
+    # 後方互換性: 最初の引数がファイル名（サブコマンド以外）の場合
+    if len(sys.argv) > 1 and sys.argv[1] not in ['compare', 'dual', '-h', '--help'] and not sys.argv[1].startswith('-'):
+        # 単一ファイル処理として扱う
+        # 引数を手動で解析
+        simple_parser = argparse.ArgumentParser(add_help=False)
+        simple_parser.add_argument('input_file')
+        simple_parser.add_argument('-o', '--output')
+        simple_parser.add_argument('--type', choices=['score', 'file'], default='score')
+        simple_parser.add_argument('--gpu', action='store_true')
+        args = simple_parser.parse_args()
+        compare_command(args)
+    else:
+        # 通常のサブコマンド処理
+        args = parser.parse_args()
+
+        if args.command == 'compare':
+            args.func(args)
+        elif args.command == 'dual':
+            args.func(args)
+        elif args.input_file:
+            compare_command(args)
+        else:
+            parser.print_help()
+            sys.exit(1)
 
 
 if __name__ == "__main__":

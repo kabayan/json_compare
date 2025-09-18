@@ -87,7 +87,7 @@ class TestIntegration:
                 data = {'type': 'file', 'gpu': 'false'}
 
                 upload_response = requests.post(
-                    f"{API_URL}/upload",
+                    f"{API_URL}/api/compare/single",
                     files=files,
                     data=data
                 )
@@ -126,7 +126,7 @@ class TestIntegration:
         try:
             with open(temp_file, 'rb') as f:
                 files = {'file': ('test.txt', f, 'text/plain')}
-                response = requests.post(f"{API_URL}/upload", files=files)
+                response = requests.post(f"{API_URL}/api/compare/single", files=files)
 
             assert response.status_code == 400
             error_detail = response.json()['detail']
@@ -176,7 +176,7 @@ class TestIntegration:
                 with open(f.name, 'rb') as file:
                     files = {'file': ('parallel.jsonl', file, 'application/jsonl')}
                     data = {'type': 'score', 'gpu': 'false'}
-                    response = requests.post(f"{API_URL}/upload", files=files, data=data)
+                    response = requests.post(f"{API_URL}/api/compare/single", files=files, data=data)
 
                 return response.status_code == 200
 
@@ -217,7 +217,7 @@ class TestIntegration:
             with open(temp_file, 'rb') as f:
                 files = {'file': ('test.jsonl', f, 'application/jsonl')}
                 data = {'type': 'score', 'gpu': 'false'}
-                api_response = requests.post(f"{API_URL}/upload", files=files, data=data)
+                api_response = requests.post(f"{API_URL}/api/compare/single", files=files, data=data)
             api_output = api_response.json() if api_response.status_code == 200 else None
 
             # 3. 結果の比較（メタデータを除く）

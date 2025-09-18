@@ -26,7 +26,7 @@ def test_invalid_file_type():
             files = {'file': ('test.txt', f, 'text/plain')}
             data = {'type': 'score', 'gpu': 'false'}
 
-            response = requests.post(f"{API_URL}/upload", files=files, data=data)
+            response = requests.post(f"{API_URL}/api/compare/single", files=files, data=data)
 
             assert response.status_code == 400
             result = response.json()
@@ -70,7 +70,7 @@ def test_invalid_json_with_repair():
             files = {'file': ('test.jsonl', f, 'application/jsonl')}
             data = {'type': 'score', 'gpu': 'false'}
 
-            response = requests.post(f"{API_URL}/upload", files=files, data=data)
+            response = requests.post(f"{API_URL}/api/compare/single", files=files, data=data)
 
             # 修復成功して処理が完了することを確認
             assert response.status_code == 200
@@ -95,7 +95,7 @@ def test_empty_file_error():
             files = {'file': ('empty.jsonl', f, 'application/jsonl')}
             data = {'type': 'score', 'gpu': 'false'}
 
-            response = requests.post(f"{API_URL}/upload", files=files, data=data)
+            response = requests.post(f"{API_URL}/api/compare/single", files=files, data=data)
 
             assert response.status_code == 400
             result = response.json()
@@ -132,7 +132,7 @@ def test_large_file_error():
             files = {'file': ('large.jsonl', f, 'application/jsonl')}
             data = {'type': 'score', 'gpu': 'false'}
 
-            response = requests.post(f"{API_URL}/upload", files=files, data=data)
+            response = requests.post(f"{API_URL}/api/compare/single", files=files, data=data)
 
             assert response.status_code == 413
             result = response.json()
@@ -207,7 +207,7 @@ def test_successful_upload_with_logging():
             data = {'type': 'score', 'gpu': 'false'}
 
             start_time = time.time()
-            response = requests.post(f"{API_URL}/upload", files=files, data=data)
+            response = requests.post(f"{API_URL}/api/compare/single", files=files, data=data)
             processing_time = time.time() - start_time
 
             assert response.status_code == 200
