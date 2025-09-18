@@ -48,6 +48,67 @@ app = FastAPI(
     version="1.0.0"
 )
 
+
+# バリデーション関数
+def validate_llm_config(config: Dict[str, Any]) -> bool:
+    """LLM設定を検証"""
+    temperature = config.get("temperature", 0.2)
+    max_tokens = config.get("max_tokens", 64)
+
+    if not (0.0 <= temperature <= 1.0):
+        raise ValueError("temperatureは0.0から1.0の間で指定してください")
+
+    if max_tokens < 1:
+        raise ValueError("max_tokensは1以上で指定してください")
+
+    return True
+
+
+def validate_prompt_file(prompt_data: Dict[str, Any]) -> bool:
+    """プロンプトファイル形式を検証"""
+    required_fields = ["user_prompt"]
+
+    for field in required_fields:
+        if field not in prompt_data:
+            raise ValueError(f"{field}は必須フィールドです")
+
+    return True
+
+
+# LLM処理関数のプレースホルダ
+async def process_jsonl_file_with_llm(file_path: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    """LLM付きJSONLファイル処理（プレースホルダ）"""
+    # 実際の実装では enhanced_cli の機能を使用
+    from .enhanced_cli import EnhancedCLI, CLIConfig
+
+    cli_config = CLIConfig(
+        calculation_method="llm",
+        llm_enabled=True,
+        model_name=config.get("model", "qwen3-14b-awq"),
+        temperature=config.get("temperature", 0.2),
+        max_tokens=config.get("max_tokens", 64)
+    )
+
+    enhanced_cli = EnhancedCLI()
+    return await enhanced_cli.process_single_file(file_path, cli_config, config.get("type", "score"))
+
+
+async def process_dual_files_with_llm(file1_path: str, file2_path: str, column: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    """LLM付きデュアルファイル処理（プレースホルダ）"""
+    from .enhanced_cli import EnhancedCLI, CLIConfig
+
+    cli_config = CLIConfig(
+        calculation_method="llm",
+        llm_enabled=True,
+        model_name=config.get("model", "qwen3-14b-awq"),
+        temperature=config.get("temperature", 0.2),
+        max_tokens=config.get("max_tokens", 64)
+    )
+
+    enhanced_cli = EnhancedCLI()
+    return await enhanced_cli.process_dual_files(file1_path, file2_path, column, cli_config, config.get("type", "score"))
+
+
 # リクエストロギングミドルウェア
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -94,6 +155,46 @@ class CompareRequest(BaseModel):
     file2: Optional[str] = None
     type: str = "score"
     output: Optional[str] = None
+
+
+class LLMConfig(BaseModel):
+    """LLM設定のモデル"""
+    model: str = "qwen3-14b-awq"
+    temperature: float = 0.2
+    max_tokens: int = 64
+    prompt_file: Optional[str] = None
+
+
+class CompareRequestWithLLM(BaseModel):
+    """LLM付き比較リクエストのモデル"""
+    file_content: str
+    type: str = "score"
+    use_llm: bool = False
+    llm_config: Optional[LLMConfig] = None
+    fallback_enabled: bool = True
+
+
+class DualFileCompareRequestWithLLM(BaseModel):
+    """LLM付きデュアルファイル比較リクエストのモデル"""
+    file1_content: str
+    file2_content: str
+    column: str = "inference"
+    type: str = "score"
+    use_llm: bool = False
+    llm_config: Optional[LLMConfig] = None
+    fallback_enabled: bool = True
+
+
+class PromptUploadResponse(BaseModel):
+    """プロンプトアップロードレスポンスのモデル"""
+    status: str
+    prompt_id: str
+    message: Optional[str] = None
+
+
+class PromptListResponse(BaseModel):
+    """プロンプト一覧レスポンスのモデル"""
+    prompts: List[Dict[str, Any]]
 
 
 class HealthResponse(BaseModel):
@@ -179,7 +280,7 @@ async def compare(request: CompareRequest) -> Union[Dict[str, Any], List[Dict[st
         )
 
 
-@app.post("/upload")
+@app.post("/api/compare/single")
 async def upload_file(
     request: Request,
     file: UploadFile = File(...),
@@ -1218,6 +1319,36 @@ async def ui_form():
             border-color: #667eea;
         }
 
+        input[type="number"] {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 14px;
+            color: #333;
+            background: white;
+            transition: border-color 0.3s ease;
+        }
+
+        input[type="number"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .llm-config-section {
+            background: #f8fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 15px;
+            padding: 20px;
+            margin-top: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .llm-config-section.active {
+            background: #eef2ff;
+            border-color: #c3d4ff;
+        }
+
         @media (max-width: 640px) {
             .container {
                 padding: 30px 20px;
@@ -1279,6 +1410,44 @@ async def ui_form():
                 </div>
             </div>
 
+            <!-- LLM設定セクション -->
+            <div class="form-group">
+                <div class="checkbox-wrapper">
+                    <input type="checkbox" id="use_llm" name="use_llm" value="true" onclick="toggleLLMConfig()">
+                    <label for="use_llm" class="checkbox-label">🤖 LLMベース判定を使用</label>
+                </div>
+            </div>
+
+            <div id="llm_config_section" class="llm-config-section" style="display: none;">
+                <div class="form-group">
+                    <label for="prompt_file">プロンプトファイル</label>
+                    <div class="file-input-wrapper">
+                        <label for="prompt_file" class="file-input-button" id="promptFileLabel">
+                            📄 プロンプトファイルを選択（.yaml）
+                        </label>
+                        <input type="file" id="prompt_file" name="prompt_file" accept=".yaml,.yml">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="model_name">LLMモデル名</label>
+                    <input type="text" id="model_name" name="model_name" placeholder="qwen3-14b-awq" value="qwen3-14b-awq">
+                </div>
+
+                <div class="form-group">
+                    <div class="file-inputs-row">
+                        <div>
+                            <label for="temperature">生成温度</label>
+                            <input type="number" id="temperature" name="temperature" min="0" max="1" step="0.1" value="0.2">
+                        </div>
+                        <div>
+                            <label for="max_tokens">最大トークン数</label>
+                            <input type="number" id="max_tokens" name="max_tokens" min="1" max="512" value="64">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <button type="submit" class="submit-button" id="submitButton">
                 📊 類似度を計算
             </button>
@@ -1321,6 +1490,44 @@ async def ui_form():
                 <div class="checkbox-wrapper">
                     <input type="checkbox" id="gpu2" name="gpu" value="true">
                     <label for="gpu2" class="checkbox-label">GPU を使用する（高速処理）</label>
+                </div>
+            </div>
+
+            <!-- LLM設定セクション (デュアルファイル用) -->
+            <div class="form-group">
+                <div class="checkbox-wrapper">
+                    <input type="checkbox" id="use_llm2" name="use_llm" value="true" onclick="toggleLLMConfig2()">
+                    <label for="use_llm2" class="checkbox-label">🤖 LLMベース判定を使用</label>
+                </div>
+            </div>
+
+            <div id="llm_config_section2" class="llm-config-section" style="display: none;">
+                <div class="form-group">
+                    <label for="prompt_file2">プロンプトファイル</label>
+                    <div class="file-input-wrapper">
+                        <label for="prompt_file2" class="file-input-button" id="promptFileLabel2">
+                            📄 プロンプトファイルを選択（.yaml）
+                        </label>
+                        <input type="file" id="prompt_file2" name="prompt_file" accept=".yaml,.yml">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="model_name2">LLMモデル名</label>
+                    <input type="text" id="model_name2" name="model_name" placeholder="qwen3-14b-awq" value="qwen3-14b-awq">
+                </div>
+
+                <div class="form-group">
+                    <div class="file-inputs-row">
+                        <div>
+                            <label for="temperature2">生成温度</label>
+                            <input type="number" id="temperature2" name="temperature" min="0" max="1" step="0.1" value="0.2">
+                        </div>
+                        <div>
+                            <label for="max_tokens2">最大トークン数</label>
+                            <input type="number" id="max_tokens2" name="max_tokens" min="1" max="512" value="64">
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -1431,6 +1638,68 @@ async def ui_form():
             }
         });
 
+        // LLM設定の表示/非表示切り替え（単一ファイル用）
+        function toggleLLMConfig() {
+            const useLLMCheckbox = document.getElementById('use_llm');
+            const llmConfigSection = document.getElementById('llm_config_section');
+
+            if (useLLMCheckbox.checked) {
+                llmConfigSection.style.display = 'block';
+                llmConfigSection.classList.add('active');
+            } else {
+                llmConfigSection.style.display = 'none';
+                llmConfigSection.classList.remove('active');
+            }
+        }
+
+        // LLM設定の表示/非表示切り替え（デュアルファイル用）
+        function toggleLLMConfig2() {
+            const useLLMCheckbox = document.getElementById('use_llm2');
+            const llmConfigSection = document.getElementById('llm_config_section2');
+
+            if (useLLMCheckbox.checked) {
+                llmConfigSection.style.display = 'block';
+                llmConfigSection.classList.add('active');
+            } else {
+                llmConfigSection.style.display = 'none';
+                llmConfigSection.classList.remove('active');
+            }
+        }
+
+        // プロンプトファイル選択時の表示更新（単一ファイル用）
+        const promptFileInput = document.getElementById('prompt_file');
+        const promptFileLabel = document.getElementById('promptFileLabel');
+
+        if (promptFileInput) {
+            promptFileInput.addEventListener('change', function() {
+                if (this.files && this.files.length > 0) {
+                    const fileName = this.files[0].name;
+                    promptFileLabel.textContent = `✅ ${fileName}`;
+                    promptFileLabel.classList.add('file-selected');
+                } else {
+                    promptFileLabel.textContent = '📄 プロンプトファイルを選択（.yaml）';
+                    promptFileLabel.classList.remove('file-selected');
+                }
+            });
+        }
+
+        // プロンプトファイル選択時の表示更新（デュアルファイル用）
+        const promptFileInput2 = document.getElementById('prompt_file2');
+        const promptFileLabel2 = document.getElementById('promptFileLabel2');
+
+        if (promptFileInput2) {
+            promptFileInput2.addEventListener('change', function() {
+                if (this.files && this.files.length > 0) {
+                    const fileName = this.files[0].name;
+                    promptFileLabel2.textContent = `✅ ${fileName}`;
+                    promptFileLabel2.classList.add('file-selected');
+                } else {
+                    promptFileLabel2.textContent = '📄 プロンプトファイルを選択（.yaml）';
+                    promptFileLabel2.classList.remove('file-selected');
+                }
+            });
+        }
+
         // 単一ファイルフォーム送信処理
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -1448,7 +1717,7 @@ async def ui_form():
             resultContainer.classList.remove('active');
 
             try {
-                const response = await fetch('/upload', {
+                const response = await fetch('/api/compare/single', {
                     method: 'POST',
                     body: formData
                 });
@@ -1896,7 +2165,8 @@ async def root():
         "version": "1.0.0",
         "endpoints": {
             "compare": "POST /compare",
-            "upload": "POST /upload",
+            "compare_single": "POST /api/compare/single",
+            "compare_dual": "POST /api/compare/dual",
             "download_csv": "POST /download/csv",
             "ui": "GET /ui",
             "health": "GET /health",
@@ -1921,6 +2191,180 @@ async def get_metrics():
         "upload_metrics": metrics_collector.get_summary(),
         "timestamp": datetime.now().isoformat()
     }
+
+
+# LLM機能統合API
+@app.post("/api/compare/llm")
+async def compare_with_llm(request: CompareRequestWithLLM):
+    """LLM付き比較API"""
+    try:
+        # LLM設定の検証
+        if request.use_llm and request.llm_config:
+            validate_llm_config(request.llm_config.model_dump())
+
+        # 一時ファイルに内容を書き込み
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
+            f.write(request.file_content)
+            temp_file_path = f.name
+
+        try:
+            if request.use_llm:
+                try:
+                    # LLMベース処理
+                    config = request.llm_config.model_dump() if request.llm_config else {}
+                    config["type"] = request.type
+                    result = await process_jsonl_file_with_llm(temp_file_path, config)
+                except Exception as llm_error:
+                    if request.fallback_enabled:
+                        # フォールバックとして埋め込みベース処理を実行
+                        logger.log_error(
+                            str(uuid.uuid4()),
+                            "llm_fallback",
+                            f"LLM処理失敗によりフォールバック実行: {str(llm_error)}",
+                            context={"fallback_enabled": True}
+                        )
+                        result = process_jsonl_file(temp_file_path, request.type)
+                        # 結果にフォールバックメタデータを追加
+                        if "detailed_results" in result:
+                            for item in result["detailed_results"]:
+                                item["method"] = "embedding_fallback"
+                    else:
+                        raise llm_error
+            else:
+                # 通常の埋め込みベース処理
+                result = process_jsonl_file(temp_file_path, request.type)
+
+            return result
+
+        finally:
+            # 一時ファイルのクリーンアップ
+            os.unlink(temp_file_path)
+
+    except Exception as e:
+        error_id = str(uuid.uuid4())
+        logger.log_error(error_id, "llm_api_error", str(e), context={"request_type": "compare_llm"})
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/compare/dual/llm")
+async def compare_dual_with_llm(request: DualFileCompareRequestWithLLM):
+    """LLM付きデュアルファイル比較API"""
+    try:
+        # LLM設定の検証
+        if request.use_llm and request.llm_config:
+            validate_llm_config(request.llm_config.model_dump())
+
+        # 一時ファイルに内容を書き込み
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f1:
+            f1.write(request.file1_content)
+            temp_file1_path = f1.name
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f2:
+            f2.write(request.file2_content)
+            temp_file2_path = f2.name
+
+        try:
+            if request.use_llm:
+                # LLMベース処理
+                config = request.llm_config.model_dump() if request.llm_config else {}
+                config["type"] = request.type
+                result = await process_dual_files_with_llm(
+                    temp_file1_path, temp_file2_path, request.column, config
+                )
+            else:
+                # 通常の埋め込みベース処理（既存機能を使用）
+                extractor = DualFileExtractor()
+                result = extractor.compare_dual_files(
+                    temp_file1_path, temp_file2_path, request.column, request.type
+                )
+
+            return result
+
+        finally:
+            # 一時ファイルのクリーンアップ
+            os.unlink(temp_file1_path)
+            os.unlink(temp_file2_path)
+
+    except Exception as e:
+        error_id = str(uuid.uuid4())
+        logger.log_error(error_id, "llm_dual_api_error", str(e), context={"request_type": "dual_compare_llm"})
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/prompts/upload", response_model=PromptUploadResponse)
+async def upload_prompt(file: UploadFile = File(...)):
+    """プロンプトファイルアップロードAPI"""
+    try:
+        if not file.filename.endswith(('.yaml', '.yml')):
+            raise HTTPException(status_code=400, detail="プロンプトファイルは.yamlまたは.yml形式である必要があります")
+
+        # ファイル内容を読み取り
+        content = await file.read()
+
+        # YAML形式の検証
+        import yaml
+        try:
+            prompt_data = yaml.safe_load(content.decode('utf-8'))
+            validate_prompt_file(prompt_data)
+        except yaml.YAMLError:
+            raise HTTPException(status_code=400, detail="無効なYAML形式です")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # プロンプトファイルを保存（一意のIDを生成）
+        prompt_id = str(uuid.uuid4())
+        prompt_dir = Path("prompts")
+        prompt_dir.mkdir(exist_ok=True)
+
+        saved_path = prompt_dir / f"{prompt_id}.yaml"
+        with open(saved_path, 'wb') as f:
+            f.write(content)
+
+        return PromptUploadResponse(
+            status="success",
+            prompt_id=prompt_id,
+            message=f"プロンプトファイルが保存されました: {file.filename}"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_id = str(uuid.uuid4())
+        logger.log_error(error_id, "prompt_upload_error", str(e), context={"request_type": "prompt_upload"})
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/prompts", response_model=PromptListResponse)
+async def list_prompts():
+    """プロンプト一覧取得API"""
+    try:
+        prompt_dir = Path("prompts")
+        prompts = []
+
+        # デフォルトプロンプトを追加
+        prompts.append({
+            "name": "default_similarity.yaml",
+            "id": "default",
+            "description": "デフォルトの類似度判定プロンプト"
+        })
+
+        # アップロードされたプロンプトを追加
+        if prompt_dir.exists():
+            for prompt_file in prompt_dir.glob("*.yaml"):
+                if prompt_file.stem != "default_similarity":
+                    prompts.append({
+                        "name": prompt_file.name,
+                        "id": prompt_file.stem,
+                        "description": f"カスタムプロンプト: {prompt_file.name}"
+                    })
+
+        return PromptListResponse(prompts=prompts)
+
+    except Exception as e:
+        error_id = str(uuid.uuid4())
+        logger.log_error(error_id, "prompt_list_error", str(e), context={"request_type": "prompt_list"})
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 def main():

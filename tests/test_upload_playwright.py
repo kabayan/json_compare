@@ -100,7 +100,7 @@ class TestFileUploadAPI:
         with open(sample_jsonl_file, 'rb') as f:
             file_content = f.read()
 
-        response = await api_context.post("/upload",
+        response = await api_context.post("/api/compare/single",
             multipart={
                 "file": {
                     "name": "test.jsonl",
@@ -133,7 +133,7 @@ class TestFileUploadAPI:
             with open(temp_path, 'rb') as f:
                 file_content = f.read()
 
-            response = await api_context.post("/upload",
+            response = await api_context.post("/api/compare/single",
                 multipart={
                     "file": {
                         "name": "test.txt",
@@ -160,7 +160,7 @@ class TestFileUploadAPI:
         with open(sample_jsonl_file, 'rb') as f:
             file_content = f.read()
 
-        response = await api_context.post("/upload",
+        response = await api_context.post("/api/compare/single",
             multipart={
                 "file": {
                     "name": "test.jsonl",
@@ -182,7 +182,7 @@ class TestFileUploadAPI:
         with open(sample_jsonl_file, 'rb') as f:
             file_content = f.read()
 
-        response = await api_context.post("/upload",
+        response = await api_context.post("/api/compare/single",
             multipart={
                 "file": {
                     "name": "test.jsonl",
@@ -210,7 +210,7 @@ class TestFileUploadAPI:
         with open(invalid_json_file, 'rb') as f:
             file_content = f.read()
 
-        response = await api_context.post("/upload",
+        response = await api_context.post("/api/compare/single",
             multipart={
                 "file": {
                     "name": "invalid.jsonl",
@@ -237,7 +237,7 @@ class TestFileUploadAPI:
             with open(temp_path, 'rb') as f:
                 file_content = f.read()
 
-            response = await api_context.post("/upload",
+            response = await api_context.post("/api/compare/single",
                 multipart={
                     "file": {
                         "name": "empty.jsonl",
@@ -266,7 +266,7 @@ class TestFileUploadAPI:
         # Send multiple requests concurrently
         tasks = []
         for i in range(3):
-            task = api_context.post("/upload",
+            task = api_context.post("/api/compare/single",
                 multipart={
                     "file": {
                         "name": f"test_{i}.jsonl",
