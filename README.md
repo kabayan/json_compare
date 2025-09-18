@@ -9,6 +9,7 @@ JSONLファイル内の`inference1`と`inference2`フィールドの類似度を
 - 🧠 **日本語特化** - cl-nagoya/ruri-v3-310mモデルによる高精度な日本語処理
 - 💻 **CPU/GPU両対応** - デフォルトCPUで軽量動作、GPUオプションで高速処理
 - 📊 **2つの出力形式** - 全体平均（score）と各行詳細（file）
+- 🔀 **2ファイル比較** - 2つのJSONLファイルの指定列を比較（新機能）
 
 ### Web UI & API機能（新機能）
 - 🌐 **直感的なWeb UI** - ドラッグ&ドロップ対応のモダンなインターフェース
@@ -18,6 +19,7 @@ JSONLファイル内の`inference1`と`inference2`フィールドの類似度を
 
 ### 信頼性機能
 - 🔧 **自動JSONL修復** - 不正なJSON行を自動的に修復
+- 📐 **自動フォーマット修正** - 複数行のJSONオブジェクトを1行1オブジェクト形式に自動変換（新機能）
 - 🆔 **エラーID生成** - トラブルシューティング用の一意のエラーID
 - 💡 **改善提案** - エラー時に具体的な解決策を提示
 - 🔍 **システムリソース監視** - メモリ/ディスク不足の事前検知
@@ -53,8 +55,14 @@ uv run python -m src.__main__ input.jsonl --type score
 
 ### 基本コマンド
 
+#### 単一ファイル比較（従来機能）
 ```bash
 json_compare <input_file> [options]
+```
+
+#### 2ファイル比較（新機能）
+```bash
+json_compare dual <file1> <file2> [options]
 ```
 
 ### オプション
@@ -64,6 +72,7 @@ json_compare <input_file> [options]
 | `--type {score,file}` | 出力タイプ<br>• `score`: 全体平均を1行で出力<br>• `file`: 各行の詳細を配列で出力 | `score` |
 | `-o, --output <file>` | 出力ファイルパス（省略時は標準出力） | - |
 | `--gpu` | GPUを使用（要CUDA環境） | CPU使用 |
+| `--column <name>` | 比較する列名（dualコマンド用） | `inference` |
 | `-h, --help` | ヘルプを表示 | - |
 
 ## 使用例
@@ -122,6 +131,44 @@ uvx --from . json_compare data.jsonl --type file -o details.json
 uvx --from . json_compare data.jsonl --type score --gpu
 ```
 
+### 4. 2ファイル比較（新機能）
+
+2つのJSONLファイルの指定列を抽出して比較：
+
+```bash
+# inference列を比較（デフォルト）
+json_compare dual file1.jsonl file2.jsonl --type score
+
+# カスタム列名を指定
+json_compare dual file1.jsonl file2.jsonl --column custom_text --type score
+
+# 詳細結果を出力
+json_compare dual file1.jsonl file2.jsonl --type file -o comparison.json
+```
+
+**出力例（dualコマンド）：**
+```json
+{
+  "score": 0.8234,
+  "meaning": "非常に類似",
+  "total_lines": 100,
+  "json": {
+    "field_match_ratio": 0.9000,
+    "value_similarity": 0.8234,
+    "final_score": 0.8234
+  },
+  "_metadata": {
+    "source_files": {
+      "file1": "file1.jsonl",
+      "file2": "file2.jsonl"
+    },
+    "column_compared": "inference",
+    "rows_compared": 100,
+    "gpu_used": false
+  }
+}
+```
+
 ## Web UI とAPI（新機能）
 
 ### Web UIの起動
@@ -135,8 +182,11 @@ http://localhost:18081/ui
 ```
 
 Web UIでは以下の機能が利用可能：
+- 📄 **単一ファイル比較** - 従来のinference1/inference2比較
+- 📑 **2ファイル比較** - 2つのJSONLファイルの指定列を比較（新機能）
 - 📁 JSONLファイルのドラッグ＆ドロップまたは選択
 - 🎯 出力形式の選択（スコア/ファイル詳細）
+- 🔄 列名の指定（2ファイル比較時）
 - ⚡ GPU使用の有無選択
 - 💾 結果のJSON/CSV形式でのダウンロード
 - 📊 リアルタイムの処理状況表示
@@ -145,7 +195,7 @@ Web UIでは以下の機能が利用可能：
 
 ### REST APIエンドポイント
 
-#### 1. ファイルアップロード（メインエンドポイント）
+#### 1. 単一ファイルアップロード（従来機能）
 
 ```bash
 curl -X POST http://localhost:18081/upload \
@@ -171,13 +221,47 @@ curl -X POST http://localhost:18081/upload \
 }
 ```
 
-#### 2. ヘルスチェック
+#### 2. 2ファイル比較（新機能）
+
+```bash
+curl -X POST http://localhost:18081/api/compare/dual \
+  -F "file1=@file1.jsonl" \
+  -F "file2=@file2.jsonl" \
+  -F "column=inference" \
+  -F "type=score" \
+  -F "gpu=false"
+```
+
+**レスポンス例：**
+```json
+{
+  "score": 0.8234,
+  "meaning": "非常に類似",
+  "total_lines": 100,
+  "json": {
+    "field_match_ratio": 0.9000,
+    "value_similarity": 0.8234,
+    "final_score": 0.8234
+  },
+  "_metadata": {
+    "source_files": {
+      "file1": "file1.jsonl",
+      "file2": "file2.jsonl"
+    },
+    "column_compared": "inference",
+    "rows_compared": 100,
+    "gpu_used": false
+  }
+}
+```
+
+#### 3. ヘルスチェック
 
 ```bash
 curl http://localhost:18081/health
 ```
 
-#### 3. メトリクス確認
+#### 4. メトリクス確認
 
 ```bash
 curl http://localhost:18081/metrics
@@ -310,6 +394,31 @@ uvx --reinstall --from . json_compare input.jsonl --type score
 MIT License
 
 ## 開発者向け
+
+### ユーティリティツール
+
+#### JSONLフォーマット修正ツール
+
+複数行にまたがるJSONオブジェクトを1行1オブジェクト形式に修正するヘルパーツール：
+
+```bash
+# 単一ファイルの修正
+python3 utils/fix_jsonl_format.py data.jsonl
+
+# ディレクトリ内のすべてのJSONLファイルを修正
+python3 utils/fix_jsonl_format.py --dir ./datas
+
+# サブディレクトリも含めて修正
+python3 utils/fix_jsonl_format.py --dir . --recursive
+
+# 修正前の確認（ドライラン）
+python3 utils/fix_jsonl_format.py --dir ./datas --dry-run
+
+# ファイルの検証のみ
+python3 utils/fix_jsonl_format.py --validate data.jsonl
+```
+
+**注意**: 通常の処理では、JSONLファイルのフォーマットは自動的に修正されるため、このツールを手動で実行する必要はありません。
 
 ### テスト実行
 

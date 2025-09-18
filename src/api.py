@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from .__main__ import process_jsonl_file
 from .similarity import set_gpu_mode
 from .dual_file_extractor import DualFileExtractor
+from .jsonl_formatter import auto_fix_jsonl_file
 
 # エラーハンドリングとロギング
 from .error_handler import ErrorHandler, ErrorRecovery, JsonRepair
@@ -353,6 +354,15 @@ async def upload_file(
             with open(temp_filepath, 'w', encoding='utf-8') as f:
                 f.write(repaired_content)
             temp_file_created = True
+
+            # JSONLファイルのフォーマットを自動修正
+            try:
+                fixed_path = auto_fix_jsonl_file(temp_filepath)
+                if fixed_path != temp_filepath:
+                    # 修正されたファイルを使用
+                    temp_filepath = fixed_path
+            except ValueError as format_error:
+                print(f"警告: JSONLフォーマット修正に失敗: {format_error}")
 
             # GPUモードの設定
             if gpu:
@@ -721,6 +731,31 @@ async def compare_dual_files(
             )
             raise HTTPException(status_code=400, detail=error_response)
 
+        # まず生のコンテンツを一時ファイルに保存
+        with open(temp_file1_path, 'w', encoding='utf-8') as f:
+            f.write(content1)
+
+        with open(temp_file2_path, 'w', encoding='utf-8') as f:
+            f.write(content2)
+
+        # JSONLファイルのフォーマットを自動修正（マルチライン→シングルライン）
+        try:
+            fixed_path1 = auto_fix_jsonl_file(temp_file1_path)
+            if fixed_path1 != temp_file1_path:
+                temp_file1_path = fixed_path1
+                # 修正されたファイルの内容を読み込む
+                with open(fixed_path1, 'r', encoding='utf-8') as f:
+                    content1 = f.read()
+
+            fixed_path2 = auto_fix_jsonl_file(temp_file2_path)
+            if fixed_path2 != temp_file2_path:
+                temp_file2_path = fixed_path2
+                # 修正されたファイルの内容を読み込む
+                with open(fixed_path2, 'r', encoding='utf-8') as f:
+                    content2 = f.read()
+        except ValueError as format_error:
+            print(f"警告: JSONLフォーマット修正に失敗: {format_error}")
+
         # JSONLの検証と修復
         repaired_data1, errors1, ok1 = ErrorHandler.validate_and_repair_jsonl(content1)
         if not ok1:
@@ -750,14 +785,15 @@ async def compare_dual_files(
             )
             raise HTTPException(status_code=400, detail=error_response)
 
-        # 修復済みデータを一時ファイルに保存
-        with open(temp_file1_path, 'w', encoding='utf-8') as f:
-            for item in repaired_data1:
-                f.write(json.dumps(item, ensure_ascii=False) + '\n')
+        # 検証済みデータを一時ファイルに保存（必要な場合）
+        if len(errors1) > 0 or len(errors2) > 0:
+            with open(temp_file1_path, 'w', encoding='utf-8') as f:
+                for item in repaired_data1:
+                    f.write(json.dumps(item, ensure_ascii=False) + '\n')
 
-        with open(temp_file2_path, 'w', encoding='utf-8') as f:
-            for item in repaired_data2:
-                f.write(json.dumps(item, ensure_ascii=False) + '\n')
+            with open(temp_file2_path, 'w', encoding='utf-8') as f:
+                for item in repaired_data2:
+                    f.write(json.dumps(item, ensure_ascii=False) + '\n')
 
         # GPUモードの設定
         if gpu:
@@ -768,85 +804,47 @@ async def compare_dual_files(
         # DualFileExtractorを使用して比較
         extractor = DualFileExtractor()
 
-        # タイムアウト付きで処理を実行（60秒制限）
-        try:
-            loop = asyncio.get_event_loop()
-            result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None,
-                    extractor.compare_dual_files,
-                    temp_file1_path,
-                    temp_file2_path,
-                    column,
-                    type,
-                    gpu
-                ),
-                timeout=60.0
-            )
+        # 処理を実行（タイムアウトなし - 大きなファイルに対応）
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            extractor.compare_dual_files,
+            temp_file1_path,
+            temp_file2_path,
+            column,
+            type,
+            gpu
+        )
 
-            processing_time = time.time() - start_time
+        processing_time = time.time() - start_time
 
-            # メタデータを更新
-            if isinstance(result, dict) and '_metadata' in result:
-                result["_metadata"]["processing_time"] = f"{processing_time:.2f}秒"
-                result["_metadata"]["original_files"] = {
-                    "file1": file1.filename,
-                    "file2": file2.filename
-                }
-                if errors1 or errors2:
-                    result["_metadata"]["data_repairs"] = {
-                        "file1": len(errors1),
-                        "file2": len(errors2)
-                    }
-
-            # 成功をログに記録
-            logger.log_metrics({
-                "event": "dual_file_comparison_success",
+        # メタデータを更新
+        if isinstance(result, dict) and '_metadata' in result:
+            result["_metadata"]["processing_time"] = f"{processing_time:.2f}秒"
+            result["_metadata"]["original_files"] = {
                 "file1": file1.filename,
-                "file2": file2.filename,
-                "column": column,
-                "processing_time": processing_time,
-                "gpu_mode": gpu,
-                "client_ip": client_ip
-            })
-
-            # メトリクスを更新
-            metrics_collector.record_upload(
-                success=True,
-                processing_time=processing_time,
-                file_size=len(file1_content) + len(file2_content)
-            )
-
-            return result
-
-        except asyncio.TimeoutError:
-            error_id = ErrorHandler.generate_error_id()
-            error_response = ErrorHandler.format_user_error(
-                error_id=error_id,
-                error_type="timeout",
-                details={"timeout_seconds": 60}
-            )
-
-            logger.log_error(
-                error_id=error_id,
-                error_type="timeout_error",
-                error_message="Dual file comparison timeout",
-                context={
-                    "file1": file1.filename,
-                    "file2": file2.filename,
-                    "column": column,
-                    "gpu_mode": gpu,
-                    "client_ip": client_ip
+                "file2": file2.filename
+            }
+            if errors1 or errors2:
+                result["_metadata"]["data_repairs"] = {
+                    "file1": len(errors1),
+                    "file2": len(errors2)
                 }
-            )
 
-            metrics_collector.record_upload(
-                success=False,
-                processing_time=60.0,
-                file_size=len(file1_content) + len(file2_content)
-            )
+        # 成功をログに記録（システムメトリクスを記録）
+        logger.log_metrics()
 
-            raise HTTPException(status_code=504, detail=error_response)
+        # イベント情報を通常のログに記録
+        print(f"✅ Dual file comparison success - File1: {file1.filename}, File2: {file2.filename}, Column: {column}, Time: {processing_time:.3f}s")
+
+        # メトリクスを更新
+        metrics_collector.record_upload(
+            success=True,
+            processing_time=processing_time,
+            file_size=len(file1_content) + len(file2_content)
+        )
+
+        return result
 
     except HTTPException:
         raise

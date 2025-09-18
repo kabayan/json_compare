@@ -7,9 +7,11 @@ import os
 import tempfile
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+from tqdm import tqdm
 
 from .logger import SystemLogger
 from .error_handler import ErrorHandler
+from .jsonl_formatter import auto_fix_jsonl_file
 
 
 class DualFileExtractor:
@@ -43,15 +45,28 @@ class DualFileExtractor:
             比較結果の辞書
         """
         try:
-            # ファイル検証
-            self._validate_files(file1_path, file2_path, column_name)
+            # JSONLファイルのフォーマットを自動修正
+            try:
+                fixed_file1_path = auto_fix_jsonl_file(file1_path)
+                fixed_file2_path = auto_fix_jsonl_file(file2_path)
+                # フォーマット修正後はバリデーション不要（既に正しい形式）
+                skip_validation = True
+            except ValueError as format_error:
+                print(f"警告: JSONLフォーマット修正に失敗: {format_error}")
+                # 修正に失敗した場合は元のファイルをそのまま使用
+                fixed_file1_path = file1_path
+                fixed_file2_path = file2_path
+                skip_validation = False
 
-            # 指定列の抽出
+            # バリデーション処理（フォーマット修正に失敗した場合のみ実行）
+            if not skip_validation:
+                self._validate_files(fixed_file1_path, fixed_file2_path, column_name)
+
             print(f"ファイル1から'{column_name}'列を抽出中...")
-            column1_data = self._extract_column(file1_path, column_name)
+            column1_data = self._extract_column(fixed_file1_path, column_name, "ファイル1")
 
             print(f"ファイル2から'{column_name}'列を抽出中...")
-            column2_data = self._extract_column(file2_path, column_name)
+            column2_data = self._extract_column(fixed_file2_path, column_name, "ファイル2")
 
             # 行数の確認
             len1, len2 = len(column1_data), len(column2_data)
@@ -149,46 +164,57 @@ class DualFileExtractor:
                     raise
                 raise ValueError(f"ファイル{file_num}の読み込みエラー: {str(e)}")
 
-    def _extract_column(self, file_path: str, column_name: str) -> List[str]:
+    def _extract_column(self, file_path: str, column_name: str, file_label: str = "ファイル") -> List[str]:
         """
         JSONLファイルから指定列を抽出
 
         Args:
             file_path: JSONLファイルパス
             column_name: 抽出する列名
+            file_label: 進捗表示用のラベル
 
         Returns:
             抽出した値のリスト
         """
         extracted_data = []
 
+        # まずファイルの行数を取得
         with open(file_path, 'r', encoding='utf-8') as f:
-            for line_num, line in enumerate(f, 1):
-                line = line.strip()
-                if not line:
-                    continue
+            total_lines = sum(1 for _ in f)
 
-                try:
-                    data = json.loads(line)
-                except json.JSONDecodeError:
-                    # json-repairで修復を試みる
-                    repaired = self.error_handler.validate_and_repair_jsonl(line)
-                    if repaired:
-                        data = json.loads(repaired.split('\n')[0])
-                    else:
-                        print(f"警告: 行{line_num}のJSON解析に失敗しました。スキップします。")
+        # tqdmプログレスバー付きで処理
+        with open(file_path, 'r', encoding='utf-8') as f:
+            with tqdm(total=total_lines, desc=f"{file_label} 処理中", unit="行",
+                     ncols=120,
+                     bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}行 [{elapsed}<{remaining}, {rate_fmt}]',
+                     miniters=1) as pbar:
+                for line_num, line in enumerate(f, 1):
+                    pbar.update(1)
+                    line = line.strip()
+                    if not line:
                         continue
 
-                # 列の値を取得
-                value = data.get(column_name, "")
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        # json-repairで修復を試みる
+                        repaired = self.error_handler.validate_and_repair_jsonl(line)
+                        if repaired:
+                            data = json.loads(repaired.split('\n')[0])
+                        else:
+                            print(f"警告: 行{line_num}のJSON解析に失敗しました。スキップします。")
+                            continue
 
-                # 値が辞書やリストの場合はJSON文字列に変換
-                if isinstance(value, (dict, list)):
-                    value = json.dumps(value, ensure_ascii=False)
-                elif not isinstance(value, str):
-                    value = str(value)
+                    # 列の値を取得
+                    value = data.get(column_name, "")
 
-                extracted_data.append(value)
+                    # 値が辞書やリストの場合はJSON文字列に変換
+                    if isinstance(value, (dict, list)):
+                        value = json.dumps(value, ensure_ascii=False)
+                    elif not isinstance(value, str):
+                        value = str(value)
+
+                    extracted_data.append(value)
 
         return extracted_data
 

@@ -6,9 +6,11 @@ import json
 import sys
 from pathlib import Path
 from typing import Any, Dict
+from tqdm import tqdm
 
 from .similarity import calculate_json_similarity, set_gpu_mode
 from .dual_file_extractor import DualFileExtractor
+from .jsonl_formatter import auto_fix_jsonl_file
 
 
 def load_json_file(file_path: str) -> Any:
@@ -59,51 +61,69 @@ def process_jsonl_file(file_path: str, output_type: str) -> Any:
     if not path.exists():
         raise FileNotFoundError(f"ファイルが見つかりません: {file_path}")
 
+    # JSONLファイルのフォーマットを自動修正
+    try:
+        fixed_path = auto_fix_jsonl_file(file_path)
+        path = Path(fixed_path)  # 修正後のパスを使用
+    except ValueError as e:
+        print(f"警告: JSONLフォーマット修正に失敗しました: {e}")
+        # 修正に失敗した場合は元のファイルをそのまま使用
+
     scores = []
     field_match_ratios = []
     value_similarities = []
     file_results = []
     total_lines = 0
 
+    # まずファイルの行数を取得
     with open(path, 'r', encoding='utf-8') as f:
-        for line_num, line in enumerate(f, 1):
-            if not line.strip():
-                continue
+        file_lines = sum(1 for line in f if line.strip())
 
-            total_lines += 1
+    # tqdmプログレスバー付きで処理
+    with open(path, 'r', encoding='utf-8') as f:
+        with tqdm(total=file_lines, desc="比較処理中", unit="行",
+                 ncols=120,
+                 bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}行 [{elapsed}<{remaining}, {rate_fmt}]',
+                 miniters=1) as pbar:
+            for line_num, line in enumerate(f, 1):
+                if not line.strip():
+                    continue
 
-            try:
-                # 各行をパース
-                data = json.loads(line)
+                pbar.update(1)
+                total_lines += 1
 
-                # inference1とinference2を取得
-                inference1 = data.get('inference1', '{}')
-                inference2 = data.get('inference2', '{}')
+                try:
+                    # 各行をパース
+                    data = json.loads(line)
 
-                # 類似度計算
-                score, details = calculate_json_similarity(inference1, inference2)
+                    # inference1とinference2を取得
+                    inference1 = data.get('inference1', '{}')
+                    inference2 = data.get('inference2', '{}')
 
-                # スコア収集（平均計算用）
-                scores.append(float(score))
-                field_match_ratios.append(float(details.get("field_match_ratio", 0)))
-                value_similarities.append(float(details.get("value_similarity", 0)))
+                    # 類似度計算
+                    score, details = calculate_json_similarity(inference1, inference2)
 
-                # fileタイプの場合は詳細を保存
-                if output_type == "file":
-                    result = data.copy()
-                    result['similarity_score'] = float(score)
-                    result['similarity_details'] = {
-                        "field_match_ratio": float(details.get("field_match_ratio", 0)),
-                        "value_similarity": float(details.get("value_similarity", 0))
-                    }
-                    file_results.append(result)
+                    # スコア収集（平均計算用）
+                    scores.append(float(score))
+                    field_match_ratios.append(float(details.get("field_match_ratio", 0)))
+                    value_similarities.append(float(details.get("value_similarity", 0)))
 
-            except json.JSONDecodeError as e:
-                print(f"警告: {line_num}行目のJSONパースエラー: {e}", file=sys.stderr)
-                continue
-            except Exception as e:
-                print(f"警告: {line_num}行目の処理エラー: {e}", file=sys.stderr)
-                continue
+                    # fileタイプの場合は詳細を保存
+                    if output_type == "file":
+                        result = data.copy()
+                        result['similarity_score'] = float(score)
+                        result['similarity_details'] = {
+                            "field_match_ratio": float(details.get("field_match_ratio", 0)),
+                            "value_similarity": float(details.get("value_similarity", 0))
+                        }
+                        file_results.append(result)
+
+                except json.JSONDecodeError as e:
+                    print(f"警告: {line_num}行目のJSONパースエラー: {e}", file=sys.stderr)
+                    continue
+                except Exception as e:
+                    print(f"警告: {line_num}行目の処理エラー: {e}", file=sys.stderr)
+                    continue
 
     # scoreタイプの場合は全体平均を返す
     if output_type == "score":
