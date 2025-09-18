@@ -248,3 +248,47 @@ class TestLLMClient:
 
         with pytest.raises(NotImplementedError, match="ストリーミング"):
             await client.chat_completion(messages, stream=True)
+
+    @pytest.mark.asyncio
+    async def test_api_response_time_metrics_logging(self, client):
+        """API応答時間のメトリクスログ記録テスト（Requirement 6.1）"""
+        # モックレスポンス
+        mock_response = {
+            "id": "chatcmpl-metrics-test",
+            "choices": [{
+                "message": {"content": "テスト応答"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"total_tokens": 10}
+        }
+
+        with patch('httpx.AsyncClient.post') as mock_post, \
+             patch('src.llm_client.LLMMetricsCollector') as mock_metrics_class:
+
+            mock_post.return_value = AsyncMock(
+                status_code=200,
+                json=lambda: mock_response
+            )
+
+            # モックメトリクスコレクター
+            mock_metrics = AsyncMock()
+            mock_metrics_class.return_value = mock_metrics
+
+            # クライアントにメトリクスコレクターを注入
+            client.metrics_collector = mock_metrics
+
+            messages = [ChatMessage(role="user", content="メトリクステスト")]
+            response = await client.chat_completion(messages)
+
+            # メトリクス記録が呼び出されたかを確認
+            mock_metrics.start_api_call.assert_called_once()
+            mock_metrics.end_api_call.assert_called_once()
+
+            # start_api_callの引数確認
+            start_call_args = mock_metrics.start_api_call.call_args[1]
+            assert start_call_args["model_name"] == "qwen3-14b-awq"
+
+            # end_api_callの引数確認
+            end_call_args = mock_metrics.end_api_call.call_args[1]
+            assert end_call_args["success"] is True
+            assert end_call_args["response_tokens"] == 10

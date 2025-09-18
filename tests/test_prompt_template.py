@@ -214,3 +214,158 @@ class TestPromptTemplate:
 
         assert "85.46%" in result  # フォーマット指定が適用される
         assert "テスト\n改行\tタブ\"引用符'" in result
+
+    # Task 1.2 特化テスト: プロンプト管理システムの確立
+    def test_prompt_directory_structure_management(self, tmp_path):
+        """プロンプトファイルのディレクトリ構造管理テスト（Task 1.2）"""
+        pt = PromptTemplate()
+
+        # テスト用ディレクトリ構造を作成
+        prompt_dir = tmp_path / "prompts"
+        prompt_dir.mkdir()
+
+        # 複数のプロンプトファイルを作成
+        templates = [
+            ("default_similarity.yaml", {"prompts": {"system": "Default system", "user": "Default user"}}),
+            ("semantic_similarity.yaml", {"prompts": {"system": "Semantic system", "user": "Semantic user"}}),
+            ("custom_prompt.yaml", {"prompts": {"system": "Custom system", "user": "Custom user"}})
+        ]
+
+        for filename, content in templates:
+            template_file = prompt_dir / filename
+            with open(template_file, "w", encoding="utf-8") as f:
+                yaml.dump(content, f, allow_unicode=True)
+
+        # ディレクトリ内のテンプレートファイルを一覧取得
+        available_templates = pt.list_available_templates(str(prompt_dir))
+
+        # アサーション
+        assert len(available_templates) == 3
+        assert any("default_similarity.yaml" in template for template in available_templates)
+        assert any("semantic_similarity.yaml" in template for template in available_templates)
+        assert any("custom_prompt.yaml" in template for template in available_templates)
+
+    def test_system_user_prompt_separation_management(self, tmp_path):
+        """システムプロンプトとユーザープロンプトの分離管理テスト（Task 1.2）"""
+        pt = PromptTemplate()
+
+        # システムプロンプトのみのテンプレート
+        system_only_template = {
+            "version": "1.0",
+            "prompts": {
+                "system": "あなたは専門家です。客観的に評価してください。"
+            }
+        }
+
+        # ユーザープロンプトのみのテンプレート
+        user_only_template = {
+            "version": "1.0",
+            "prompts": {
+                "user": "以下のテキストを評価してください: {text1} vs {text2}"
+            }
+        }
+
+        # 両方のプロンプトを含むテンプレート
+        complete_template = {
+            "version": "1.0",
+            "prompts": {
+                "system": "あなたは類似度判定の専門家です。",
+                "user": "テキスト1: {text1}\nテキスト2: {text2}\n類似度を評価してください。"
+            }
+        }
+
+        # 空のプロンプトテンプレート（エラーになるべき）
+        empty_prompts_template = {
+            "version": "1.0",
+            "prompts": {}
+        }
+
+        # バリデーションテスト
+        assert pt.validate_template(system_only_template) is True
+        assert pt.validate_template(user_only_template) is True
+        assert pt.validate_template(complete_template) is True
+
+        # 空のプロンプトはエラーになるべき
+        with pytest.raises(PromptTemplateError, match="少なくともsystemまたはuserプロンプトが必要"):
+            pt.validate_template(empty_prompts_template)
+
+    def test_custom_prompt_template_support(self, tmp_path):
+        """カスタムプロンプトテンプレートのサポート機能テスト（Task 1.2）"""
+        pt = PromptTemplate()
+
+        # カスタムテンプレートの作成
+        custom_template = {
+            "version": "2.0",
+            "metadata": {
+                "author": "custom_user",
+                "description": "カスタム評価プロンプト",
+                "created_at": "2025-09-19"
+            },
+            "prompts": {
+                "system": "あなたはカスタム評価者です。独自の基準で評価してください。",
+                "user": "カスタム評価:\nテキスト1: {text1}\nテキスト2: {text2}\n\n評価項目:\n- 創造性: {creativity}\n- 実用性: {practicality}"
+            },
+            "parameters": {
+                "temperature": 0.5,
+                "max_tokens": 200,
+                "custom_parameter": "custom_value"
+            }
+        }
+
+        # カスタムテンプレートファイルを作成
+        custom_file = tmp_path / "custom_evaluation.yaml"
+        with open(custom_file, "w", encoding="utf-8") as f:
+            yaml.dump(custom_template, f, allow_unicode=True)
+
+        # カスタムテンプレートの読み込み
+        loaded_template = pt.load_template(str(custom_file))
+
+        # カスタムテンプレートの検証
+        assert pt.validate_template(loaded_template) is True
+        assert loaded_template["version"] == "2.0"
+        assert loaded_template["metadata"]["author"] == "custom_user"
+        assert loaded_template["parameters"]["custom_parameter"] == "custom_value"
+
+        # カスタム変数の抽出
+        user_prompt = loaded_template["prompts"]["user"]
+        required_vars = pt.extract_variables(user_prompt)
+        expected_vars = {"text1", "text2", "creativity", "practicality"}
+        assert required_vars == expected_vars
+
+        # カスタムテンプレートとデフォルト値のマージ
+        merged_template = pt.merge_with_defaults(custom_template)
+        assert "temperature" in merged_template["parameters"]  # カスタム値が保持される
+        assert merged_template["parameters"]["temperature"] == 0.5  # カスタム値が優先される
+
+    def test_prompt_file_not_found_error_handling_extended(self, tmp_path):
+        """プロンプトファイル不在時のエラーハンドリング拡張テスト（Task 1.2）"""
+        pt = PromptTemplate()
+
+        # 存在しないディレクトリのテンプレート一覧取得
+        non_existent_dir = tmp_path / "non_existent_prompts"
+        available_templates = pt.list_available_templates(str(non_existent_dir))
+        assert available_templates == []  # 空のリストが返される
+
+        # 存在するディレクトリだが空の場合
+        empty_dir = tmp_path / "empty_prompts"
+        empty_dir.mkdir()
+        available_templates = pt.list_available_templates(str(empty_dir))
+        assert available_templates == []  # 空のリストが返される
+
+        # YAMLファイル以外のファイルが存在する場合
+        mixed_dir = tmp_path / "mixed_files"
+        mixed_dir.mkdir()
+
+        # YAML以外のファイルを作成
+        (mixed_dir / "readme.txt").write_text("This is not a YAML file")
+        (mixed_dir / "config.json").write_text('{"not": "yaml"}')
+
+        # YAMLファイルを1つ作成
+        yaml_file = mixed_dir / "valid_template.yaml"
+        with open(yaml_file, "w", encoding="utf-8") as f:
+            yaml.dump({"prompts": {"user": "test"}}, f)
+
+        # YAMLファイルのみが検出されることを確認
+        available_templates = pt.list_available_templates(str(mixed_dir))
+        assert len(available_templates) == 1
+        assert "valid_template.yaml" in available_templates[0]

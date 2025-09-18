@@ -9,6 +9,7 @@ import asyncio
 import os
 import time
 import logging
+import uuid
 from typing import Dict, List, Optional, Any, Union, Callable
 from dataclasses import dataclass, field
 from functools import wraps
@@ -16,6 +17,12 @@ import json
 from tqdm.asyncio import tqdm
 
 logger = logging.getLogger(__name__)
+
+# メトリクス収集のための遅延インポート
+try:
+    from .llm_metrics import LLMMetricsCollector
+except ImportError:
+    LLMMetricsCollector = None
 
 
 class LLMClientError(Exception):
@@ -117,15 +124,17 @@ class LLMResponse:
 class LLMClient:
     """vLLM APIクライアント"""
 
-    def __init__(self, config: Optional[LLMConfig] = None):
+    def __init__(self, config: Optional[LLMConfig] = None, metrics_collector: Optional[Any] = None):
         """
         LLMクライアントを初期化
 
         Args:
             config: クライアント設定
+            metrics_collector: メトリクス収集インスタンス
         """
         self.config = config or LLMConfig()
         self._client: Optional[httpx.AsyncClient] = None
+        self.metrics_collector = metrics_collector
 
     async def __aenter__(self):
         """非同期コンテキストマネージャーの開始"""
@@ -207,6 +216,13 @@ class LLMClient:
 
         await self._ensure_client()
 
+        # メトリクス記録用のリクエストID生成
+        request_id = str(uuid.uuid4())
+
+        # メトリクス記録開始
+        if self.metrics_collector:
+            self.metrics_collector.start_api_call(request_id=request_id, model_name=self.config.model)
+
         # リクエストボディを構築
         request_data = self.config.to_dict()
         request_data["messages"] = [msg.to_dict() for msg in messages]
@@ -226,6 +242,15 @@ class LLMClient:
                 error_data = response.json()
                 error_message = error_data.get("error", {}).get("message", "Unknown error")
 
+                # メトリクス記録（エラー）
+                if self.metrics_collector:
+                    self.metrics_collector.end_api_call(
+                        request_id=request_id,
+                        success=False,
+                        response_tokens=0,
+                        error=f"APIエラー ({response.status_code}): {error_message}"
+                    )
+
                 if response.status_code == 429:
                     raise LLMClientError(f"レート制限エラー: {error_message}")
                 else:
@@ -233,15 +258,58 @@ class LLMClient:
 
             # レスポンスをパース
             response_data = response.json()
-            return LLMResponse.from_api_response(response_data)
+            llm_response = LLMResponse.from_api_response(response_data)
+
+            # メトリクス記録（成功）
+            if self.metrics_collector:
+                self.metrics_collector.end_api_call(
+                    request_id=request_id,
+                    success=True,
+                    response_tokens=llm_response.total_tokens,
+                    error=None
+                )
+
+            return llm_response
 
         except httpx.ConnectError as e:
+            # メトリクス記録（接続エラー）
+            if self.metrics_collector:
+                self.metrics_collector.end_api_call(
+                    request_id=request_id,
+                    success=False,
+                    response_tokens=0,
+                    error=f"接続エラー: {e}"
+                )
             raise LLMClientError(f"vLLM APIへの接続に失敗しました: {e}")
         except httpx.TimeoutException as e:
+            # メトリクス記録（タイムアウトエラー）
+            if self.metrics_collector:
+                self.metrics_collector.end_api_call(
+                    request_id=request_id,
+                    success=False,
+                    response_tokens=0,
+                    error=f"タイムアウト: {e}"
+                )
             raise LLMClientError(f"APIリクエストがタイムアウトしました: {e}")
         except json.JSONDecodeError as e:
+            # メトリクス記録（JSON解析エラー）
+            if self.metrics_collector:
+                self.metrics_collector.end_api_call(
+                    request_id=request_id,
+                    success=False,
+                    response_tokens=0,
+                    error=f"JSON解析エラー: {e}"
+                )
             raise LLMClientError(f"APIレスポンスの解析に失敗しました: {e}")
         except Exception as e:
+            # メトリクス記録（その他のエラー）
+            if self.metrics_collector:
+                self.metrics_collector.end_api_call(
+                    request_id=request_id,
+                    success=False,
+                    response_tokens=0,
+                    error=f"予期しないエラー: {e}"
+                )
             if isinstance(e, LLMClientError):
                 raise
             raise LLMClientError(f"予期しないエラーが発生しました: {e}")
