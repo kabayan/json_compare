@@ -43,6 +43,7 @@
 - **Uvicorn[standard]**: 0.24.0 (ASGI server)
 - **python-multipart**: 0.0.6 (File upload handling)
 - **pydantic**: 2.5.0 (Data validation)
+- **SSE/WebSocket** [計画中]: リアルタイム進捗更新のための通信機構
 
 ### Testing & Development
 - **pytest**: 8.0+ (Testing framework)

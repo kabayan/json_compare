@@ -62,6 +62,7 @@ src/
 ├── download_and_error_manager.py    # Download handling and error management
 ├── comparison_result_validator.py   # Cross-method result validation and anomaly detection
 ├── mcp_wrapper.py                   # Lightweight Playwright MCP wrapper
+├── progress_tracker.py              # [計画中] WebUI用進捗追跡とリアルタイム更新
 └── archives/                      # Archived/deprecated code
     └── merge_jsonl.py             # Legacy JSONL merging utility
 ```
@@ -185,6 +186,7 @@ docs/
 - **form_interaction_manager.py**: Form field interaction, validation, and submission handling
 - **download_and_error_manager.py**: Download operations, error recovery, and status management
 - **mcp_wrapper.py**: Lightweight wrapper for Playwright MCP operations with error handling and retry logic
+- **progress_tracker.py** [計画中]: WebUI用進捗追跡、ログ統合、リアルタイム配信機能
 
 ### Layered Architecture
 1. **Presentation Layer**: CLI (`__main__.py`), API (`api.py`), Web UI
@@ -312,6 +314,12 @@ from .utils import parse_jsonl
 ```
 /download/csv               # CSV format conversion
 /api/prompts/upload         # Upload custom prompt template
+```
+
+### Progress Tracking Endpoints [計画中]
+```
+/api/progress/{task_id}     # 処理進捗状況の取得
+/api/progress/stream        # SSE/WebSocketによるリアルタイム進捗配信
 ```
 
 ## Key Architectural Principles

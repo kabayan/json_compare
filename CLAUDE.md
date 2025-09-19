@@ -21,6 +21,7 @@ Kiro-style Spec Driven Development implementation using claude code slash comman
 - **dual-file-inference-compare**: 2つのJSONLファイルのinference列比較機能（CLI/WebUI/API対応） (initialized)
 - **llm-similarity-vllm**: vLLM APIを使用したLLMベース類似度判定機能（オプション） (initialized)
 - **webui-playwright-mcp-testing**: WebUIのPlaywright MCP統合テスト (tasks-generated, ready for implementation)
+- **webui-progress-display**: WebUIでの評価進捗表示機能（処理時間、残り時間） (initialized)
 
 ## Development Guidelines
 - Think in English, but generate responses in Japanese (思考は英語、回答の生成は日本語で行うように)
