@@ -71,18 +71,18 @@ JSON Compare WebUIに、処理の進捗状況をリアルタイムで表示す�
 4. WHERE エラーログが出力される THE システム SHALL エラー内容を進捗表示に反映する
 5. WHEN 処理が完了した THEN システム SHALL 既存のログローテーション機能に従って進捗ログを保存する
 
-### Requirement 7: API整合性とメタデータ一貫性
-**目的:** アーキテクトとして、WebUIがAPIラッパーとして正しく機能することを保証したい。APIレスポンスのメタデータや構造が、WebUIを通しても正確に維持されることを確実にする。
+### Requirement 7: API結果の直接表示
+**目的:** WebUIユーザーとして、処理結果をAPIレスポンスそのままの形式で確認したい。APIが返すJSON構造をそのまま見ることで、データの詳細を正確に把握できるようにする。
 
 #### 受け入れ基準
 
-1. WHEN WebUIがAPIから処理結果を受信した THEN WebUI SHALL APIレスポンスのすべてのフィールドを変更せずにそのまま表示する
-2. WHERE APIレスポンスにメタデータ（calculation_method、processing_time等）が含まれる THE WebUI SHALL これらのフィールド名と値を一切変更せずに保持する
-3. IF APIがcomparison_methodフィールドを返す THEN WebUI SHALL calculation_methodへの独自変換を行わずにcomparison_methodとして表示する
-4. WHEN WebUIが結果をJSONとして表示する THEN WebUI SHALL APIから受け取った正確なJSON構造を維持する
-5. WHERE WebUIがメタデータを表示する THE WebUI SHALL 独自のメタデータフィールドを追加せず、APIから受信したメタデータのみを表示する
-6. IF APIレスポンスに_metadataフィールドが存在する THEN WebUI SHALL その内容を変更・加工せずにそのまま表示する
-7. WHEN ユーザーがダウンロード機能を使用する THEN WebUI SHALL APIレスポンスの元のデータ構造を保持したファイルを提供する
+1. WHEN WebUIがAPIから処理結果を受信した THEN WebUI SHALL APIレスポンスを整形されたJSON形式でそのまま表示する
+2. WHERE APIレスポンスがネストされたJSON構造を持つ THE WebUI SHALL インデントと改行を適用して読みやすく表示する
+3. IF 処理結果がscoreタイプである THEN WebUI SHALL APIレスポンス全体をJSONビューアー形式で表示する
+4. WHEN 処理結果がfileタイプである AND 結果配列が20行を超える THEN WebUI SHALL 先頭20行のみを表示し、残りは「...他X件」と省略表示する
+5. WHERE APIレスポンスにメタデータ（_metadata、calculation_method等）が含まれる THE WebUI SHALL これらのフィールドも含めてそのまま表示する
+6. IF ユーザーがJSON結果をコピーしたい場合 THEN WebUI SHALL ワンクリックでクリップボードにコピーできるボタンを提供する
+7. WHEN APIエラーが発生した THEN WebUI SHALL エラーレスポンスもJSON形式でそのまま表示する
 
 ### Requirement 8: Playwright MCP包括テスト検証
 **目的:** QAエンジニアとして、WebUIの進捗表示機能およびポーリング実装が全ての比較モードと出力形式で正しく動作することを実機環境で検証したい。
@@ -99,3 +99,16 @@ JSON Compare WebUIに、処理の進捗状況をリアルタイムで表示す�
 8. IF 比較メソッドの識別が必要な場合 THEN テストシステム SHALL calculation_methodまたはcomparison_methodフィールドが正しく設定されていることを確認する
 9. WHERE エラーが発生した場合 THE テストシステム SHALL 最大5回のエラーまで自動リトライが機能し、適切なエラーメッセージが表示されることを検証する
 10. WHEN 全テストパターンが完了した THEN テストレポート SHALL 各パターンの成功/失敗状態と実行時間を記録する
+
+### Requirement 9: 結果ファイルのダウンロード機能
+**目的:** WebUIユーザーとして、処理結果を手元に保存したい。特にファイル形式の場合、全件データをダウンロードできるようにする。
+
+#### 受け入れ基準
+
+1. WHEN 処理が完了した AND 結果が表示されている THEN WebUI SHALL 「結果をダウンロード」ボタンを表示する
+2. IF 結果がscoreタイプである THEN ダウンロードボタン SHALL APIレスポンス全体をJSON形式でダウンロード可能にする
+3. WHEN 結果がfileタイプである THEN ダウンロードボタン SHALL 元のAPIレスポンスの全件（省略なし）をJSONLファイルとしてダウンロード可能にする
+4. WHERE ダウンロードボタンがクリックされた THE WebUI SHALL ファイル名を「result_[timestamp].json」または「result_[timestamp].jsonl」として生成する
+5. IF 処理結果に_metadataが含まれる THEN ダウンロードファイル SHALL メタデータも含めた完全なAPIレスポンスを保存する
+6. WHEN ダウンロードが完了した THEN WebUI SHALL ユーザーに「ダウンロード完了」の通知を表示する
+7. IF ダウンロード中にエラーが発生した THEN WebUI SHALL エラーメッセージと再試行ボタンを表示する

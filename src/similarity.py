@@ -64,13 +64,13 @@ def calculate_json_similarity(json1: str, json2: str) -> tuple:
 
 
 def repair_and_parse_json(json_str: str) -> dict | None:
-    """JSON文字列を修復してパース
-    
+    """JSON文字列を修復してパース、プレーンテキストの場合は特別処理
+
     Args:
-        json_str: JSON文字列
-    
+        json_str: JSON文字列またはプレーンテキスト
+
     Returns:
-        パースされた辞書、失敗時はNone
+        パースされた辞書、プレーンテキストの場合は{"text": 値}形式、失敗時はNone
     """
     try:
         # まず通常のパースを試みる
@@ -81,7 +81,11 @@ def repair_and_parse_json(json_str: str) -> dict | None:
             repaired = repair_json(json_str)
             return json.loads(repaired)
         except:
-            # 修復も失敗したらNone
+            # JSON修復も失敗した場合、プレーンテキストとして扱う
+            # 空文字列でない場合は、textフィールドに格納した辞書として返す
+            if json_str and json_str.strip():
+                return {"text": json_str.strip()}
+            # 空文字列の場合はNone
             return None
 
 
