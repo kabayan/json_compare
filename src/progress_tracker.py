@@ -7,11 +7,14 @@ import time
 import uuid
 import json
 import asyncio
+import logging
+import os
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional, AsyncGenerator
+from typing import Dict, List, Optional, AsyncGenerator, Any
 from collections import deque
+from logging.handlers import RotatingFileHandler
 
 
 @dataclass
@@ -52,6 +55,27 @@ class ProgressTracker:
     def __init__(self):
         """Initialize the progress tracker."""
         self.tasks: Dict[str, TaskData] = {}
+
+        # ログ設定の初期化
+        self._setup_logging()
+
+        # メトリクス収集用データ
+        self.metrics_data: Dict[str, Any] = {}
+
+    def _setup_logging(self):
+        """ログ設定を初期化."""
+        self.logger = logging.getLogger("progress_tracker")
+        self.logger.setLevel(logging.INFO)
+
+        # コンソールハンドラ
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.INFO)
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
 
     def create_task(self, total_items: int) -> str:
         """Create a new task and return its unique ID.
@@ -272,6 +296,151 @@ class ProgressTracker:
 
             # Wait before next check
             await asyncio.sleep(0.1)  # Check every 100ms for tests
+
+    # ログシステム統合機能
+    def log_progress(self, task_id: str, message: str) -> None:
+        """進捗情報をログエントリとして記録."""
+        self.logger.info(f"Progress [{task_id}]: {message}")
+
+    def log_task_creation(self, task_id: str, total_items: int) -> None:
+        """タスク作成をログに記録."""
+        self.logger.info(f"Task created: {task_id} with {total_items} items")
+
+    def log_task_completion(self, task_id: str, success: bool, duration: float) -> None:
+        """タスク完了をログに記録."""
+        status = "success" if success else "failed"
+        self.logger.info(f"Task completed: {task_id} ({status}) in {duration:.2f}s")
+
+    def log_error(self, task_id: str, error_message: str, exception: Optional[Exception] = None) -> None:
+        """エラー情報を詳細ログに記録."""
+        log_msg = f"Error in task {task_id}: {error_message}"
+        if exception:
+            log_msg += f" - Exception: {str(exception)}"
+        self.logger.error(log_msg)
+
+    def log_warning(self, task_id: str, warning_message: str) -> None:
+        """警告情報をログに記録."""
+        self.logger.warning(f"Warning in task {task_id}: {warning_message}")
+
+    def log_exception(self, task_id: str, exception: Exception) -> None:
+        """例外情報を詳細ログに記録."""
+        self.logger.exception(f"Exception in task {task_id}: {str(exception)}")
+
+    # メトリクス収集統合機能
+    def record_metrics(self, task_id: str, metrics: Dict[str, Any]) -> None:
+        """メトリクスデータを記録."""
+        if task_id not in self.metrics_data:
+            self.metrics_data[task_id] = {}
+
+        self.metrics_data[task_id].update({
+            **metrics,
+            'timestamp': time.time()
+        })
+
+        self.logger.debug(f"Metrics recorded for {task_id}: {metrics}")
+
+    def get_performance_metrics(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """パフォーマンスメトリクスを取得."""
+        if task_id in self.tasks:
+            task = self.tasks[task_id]
+            progress = self.get_progress(task_id)
+
+            if progress:
+                metrics = {
+                    'task_id': task_id,
+                    'processing_speed': progress.processing_speed,
+                    'elapsed_time': progress.elapsed_time,
+                    'estimated_remaining': progress.estimated_remaining,
+                    'percentage': progress.percentage,
+                    'slow_processing_warning': progress.slow_processing_warning
+                }
+
+                # カスタムメトリクスをマージ
+                if task_id in self.metrics_data:
+                    metrics.update(self.metrics_data[task_id])
+
+                return metrics
+
+        return None
+
+    def export_metrics(self, format: str = "json") -> str:
+        """メトリクスをエクスポート."""
+        all_metrics = {}
+
+        for task_id in self.tasks.keys():
+            metrics = self.get_performance_metrics(task_id)
+            if metrics:
+                all_metrics[task_id] = metrics
+
+        if format.lower() == "json":
+            return json.dumps(all_metrics, indent=2)
+        else:
+            return str(all_metrics)
+
+    # ログローテーション対応機能
+    def configure_log_rotation(self, log_file: str = "progress.log",
+                              max_bytes: int = 10485760, backup_count: int = 5) -> None:
+        """ログローテーションを設定."""
+        # 既存のファイルハンドラを削除
+        for handler in self.logger.handlers[:]:
+            if isinstance(handler, (logging.FileHandler, RotatingFileHandler)):
+                self.logger.removeHandler(handler)
+
+        # ローテーティングファイルハンドラを追加
+        rotating_handler = RotatingFileHandler(
+            log_file, maxBytes=max_bytes, backupCount=backup_count
+        )
+        rotating_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        rotating_handler.setFormatter(formatter)
+        self.logger.addHandler(rotating_handler)
+
+        self.logger.info(f"Log rotation configured: {log_file} (max: {max_bytes} bytes, backups: {backup_count})")
+
+    def cleanup_old_logs(self, log_directory: str = ".", days_old: int = 30) -> int:
+        """古いログファイルをクリーンアップ."""
+        cleaned_count = 0
+        cutoff_time = time.time() - (days_old * 24 * 60 * 60)
+
+        try:
+            for filename in os.listdir(log_directory):
+                if filename.startswith("progress.log"):
+                    file_path = os.path.join(log_directory, filename)
+                    if os.path.isfile(file_path) and os.path.getmtime(file_path) < cutoff_time:
+                        os.remove(file_path)
+                        cleaned_count += 1
+                        self.logger.info(f"Cleaned up old log file: {filename}")
+        except Exception as e:
+            self.logger.error(f"Error during log cleanup: {str(e)}")
+
+        return cleaned_count
+
+    def get_log_settings(self) -> Dict[str, Any]:
+        """現在のログ設定を取得."""
+        settings = {
+            'logger_name': self.logger.name,
+            'log_level': logging.getLevelName(self.logger.level),
+            'handlers': []
+        }
+
+        for handler in self.logger.handlers:
+            handler_info = {
+                'type': type(handler).__name__,
+                'level': logging.getLevelName(handler.level)
+            }
+
+            if isinstance(handler, RotatingFileHandler):
+                handler_info.update({
+                    'filename': handler.baseFilename,
+                    'max_bytes': handler.maxBytes,
+                    'backup_count': handler.backupCount
+                })
+
+            settings['handlers'].append(handler_info)
+
+        return settings
 
 
 class TqdmCaptureStream:

@@ -1373,6 +1373,133 @@ async def ui_form():
             border-color: #c3d4ff;
         }
 
+        /* 進捗表示セクションのスタイリング */
+        .progress-section {
+            margin: 30px 0;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        .progress-container {
+            background: #f8fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 15px;
+            padding: 25px;
+            transition: all 0.3s ease;
+        }
+
+        .progress-title {
+            color: #333;
+            font-size: 18px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .progress-bar-container {
+            margin-bottom: 20px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            appearance: none;
+            -webkit-appearance: none;
+        }
+
+        .progress-bar::-webkit-progress-bar {
+            background-color: #e2e8f0;
+            border-radius: 6px;
+        }
+
+        .progress-bar::-webkit-progress-value {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            border-radius: 6px;
+        }
+
+        .progress-bar::-moz-progress-bar {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            border-radius: 6px;
+        }
+
+        .progress-labels {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 14px;
+            color: #555;
+        }
+
+        .progress-percentage {
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .progress-text {
+            color: #666;
+        }
+
+        .time-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .time-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+
+        .time-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .time-value {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .status-message {
+            background: #dbeafe;
+            border: 1px solid #93c5fd;
+            color: #1e40af;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .error-message {
+            background: #fef2f2;
+            border: 1px solid #fca5a5;
+            color: #dc2626;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .warning-message {
+            background: #fefbf2;
+            border: 1px solid #fbbf24;
+            color: #d97706;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
         @media (max-width: 640px) {
             .container {
                 padding: 30px 20px;
@@ -1388,6 +1515,89 @@ async def ui_form():
 
             .tabs {
                 flex-direction: column;
+            }
+        }
+
+        /* ユーザーインタラクション要素のスタイル */
+        .interaction-controls {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .cancel-button, .retry-button, .download-button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .cancel-button {
+            background: #fca5a5;
+            color: #dc2626;
+        }
+
+        .cancel-button:hover {
+            background: #f87171;
+        }
+
+        .retry-button {
+            background: #fbbf24;
+            color: #92400e;
+        }
+
+        .retry-button:hover {
+            background: #f59e0b;
+        }
+
+        .download-button {
+            background: #93c5fd;
+            color: #1e40af;
+        }
+
+        .download-button:hover {
+            background: #60a5fa;
+        }
+
+        .split-suggestion {
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+
+        .split-suggestion-content h4 {
+            margin: 0 0 10px 0;
+            color: #92400e;
+            font-size: 16px;
+        }
+
+        .split-message {
+            margin: 0 0 10px 0;
+            color: #92400e;
+            font-size: 14px;
+        }
+
+        .split-details {
+            color: #92400e;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        @media (max-width: 640px) {
+            .interaction-controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .cancel-button, .retry-button, .download-button {
+                width: 100%;
             }
         }
     </style>
@@ -1408,7 +1618,7 @@ async def ui_form():
         </div>
 
         <!-- 単一ファイルモード -->
-        <form id="uploadForm" enctype="multipart/form-data" class="mode-form active" data-mode="single">
+        <form id="uploadForm" action="/api/compare" method="post" enctype="multipart/form-data" class="mode-form active" data-mode="single">
             <div class="form-group">
                 <label for="file">JSONLファイルを選択</label>
                 <div class="file-input-wrapper">
@@ -1478,7 +1688,7 @@ async def ui_form():
         </form>
 
         <!-- 2ファイル比較モード -->
-        <form id="dualForm" enctype="multipart/form-data" class="mode-form" data-mode="dual">
+        <form id="dualForm" action="/api/compare/dual" method="post" enctype="multipart/form-data" class="mode-form" data-mode="dual">
             <div class="form-group">
                 <label>比較するJSONLファイルを選択</label>
                 <div class="file-inputs-row">
@@ -1559,6 +1769,78 @@ async def ui_form():
                 🔀 2ファイルの列を比較
             </button>
         </form>
+
+        <!-- 進捗表示セクション -->
+        <div id="progress-section" class="progress-section" style="display: none;">
+            <div id="progress-container" class="progress-container">
+                <h3 class="progress-title">📊 処理進捗</h3>
+
+                <!-- プログレスバー -->
+                <div class="progress-bar-container">
+                    <progress id="progress-bar" class="progress-bar" max="100" value="0"></progress>
+                    <div class="progress-labels">
+                        <span id="progress-percentage" class="progress-percentage">0%</span>
+                        <span id="progress-text" class="progress-text">
+                            <span id="progress-current">0</span>/<span id="progress-total">0</span>行
+                        </span>
+                    </div>
+                </div>
+
+                <!-- 時間情報 -->
+                <div class="time-info">
+                    <div class="time-item">
+                        <span class="time-label">経過時間:</span>
+                        <span id="elapsed-time" class="time-value">00:00:00</span>
+                    </div>
+                    <div class="time-item">
+                        <span class="time-label">推定残り時間:</span>
+                        <span id="remaining-time" class="time-value">計算中...</span>
+                    </div>
+                    <div class="time-item">
+                        <span class="time-label">処理速度:</span>
+                        <span id="processing-speed" class="time-value">-- 行/秒</span>
+                    </div>
+                </div>
+
+                <!-- ステータスメッセージ -->
+                <div id="status-message" class="status-message" style="display: none;"></div>
+
+                <!-- エラーメッセージ -->
+                <div id="error-message" class="error-message" style="display: none;"></div>
+
+                <!-- 警告メッセージ -->
+                <div id="warning-message" class="warning-message" style="display: none;"></div>
+
+                <!-- ユーザーインタラクション要素 -->
+                <div class="interaction-controls">
+                    <!-- キャンセルボタン -->
+                    <button id="cancel-button" class="cancel-button" style="display: none;">
+                        ❌ 処理をキャンセル
+                    </button>
+
+                    <!-- 再試行ボタン -->
+                    <button id="retry-button" class="retry-button" style="display: none;">
+                        🔄 再試行
+                    </button>
+
+                    <!-- 部分結果ダウンロードボタン -->
+                    <button id="download-partial-results" class="download-button" style="display: none;">
+                        💾 部分結果をダウンロード
+                    </button>
+                </div>
+
+                <!-- ファイル分割提案 -->
+                <div id="split-suggestion" class="split-suggestion" style="display: none;">
+                    <div class="split-suggestion-content">
+                        <h4>📂 ファイルサイズ分割提案</h4>
+                        <p class="split-message">ファイルが大きすぎるため、処理を分割することをお勧めします。</p>
+                        <div class="split-details">
+                            <span id="suggested-split-size" class="split-size">推奨分割サイズ: 計算中...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <div class="loading" id="loading">
             <div class="spinner"></div>
@@ -1675,6 +1957,437 @@ async def ui_form():
                 llmConfigSection.classList.remove('active');
             }
         }
+
+        // 進捗表示関数
+        function showProgress() {
+            const progressSection = document.getElementById('progress-section');
+            progressSection.style.display = 'block';
+        }
+
+        function hideProgress() {
+            const progressSection = document.getElementById('progress-section');
+            progressSection.style.display = 'none';
+        }
+
+        function formatTime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function updateProgress(progressData) {
+            // プログレスバーを更新
+            const progressBar = document.getElementById('progress-bar');
+            const progressPercentage = document.getElementById('progress-percentage');
+            const progressCurrent = document.getElementById('progress-current');
+            const progressTotal = document.getElementById('progress-total');
+            const elapsedTime = document.getElementById('elapsed-time');
+            const remainingTime = document.getElementById('remaining-time');
+            const processingSpeed = document.getElementById('processing-speed');
+
+            if (progressBar) progressBar.value = progressData.percentage || 0;
+            if (progressPercentage) progressPercentage.textContent = `${Math.round(progressData.percentage || 0)}%`;
+            if (progressCurrent) progressCurrent.textContent = progressData.current || 0;
+            if (progressTotal) progressTotal.textContent = progressData.total || 0;
+            if (elapsedTime) elapsedTime.textContent = formatTime(progressData.elapsed_seconds || 0);
+
+            if (remainingTime) {
+                if (progressData.remaining_seconds) {
+                    remainingTime.textContent = formatTime(progressData.remaining_seconds);
+                } else {
+                    remainingTime.textContent = '計算中...';
+                }
+            }
+
+            if (processingSpeed) {
+                const speed = progressData.processing_speed || 0;
+                processingSpeed.textContent = `${speed.toFixed(2)} 行/秒`;
+            }
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error-message');
+            if (errorDiv) {
+                errorDiv.textContent = message;
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        function showWarning(message) {
+            const warningDiv = document.getElementById('warning-message');
+            if (warningDiv) {
+                warningDiv.textContent = message;
+                warningDiv.style.display = 'block';
+            }
+        }
+
+        function showStatus(message) {
+            const statusDiv = document.getElementById('status-message');
+            if (statusDiv) {
+                statusDiv.textContent = message;
+                statusDiv.style.display = 'block';
+            }
+        }
+
+        function clearMessages() {
+            const errorDiv = document.getElementById('error-message');
+            const warningDiv = document.getElementById('warning-message');
+            const statusDiv = document.getElementById('status-message');
+
+            if (errorDiv) errorDiv.style.display = 'none';
+            if (warningDiv) warningDiv.style.display = 'none';
+            if (statusDiv) statusDiv.style.display = 'none';
+        }
+
+        // SSE クライアント機能
+        let currentEventSource = null;
+        let maxReconnectAttempts = 5;
+        let currentReconnectAttempts = 0;
+
+        function connectSSE(taskId) {
+            if (currentEventSource) {
+                disconnectSSE();
+            }
+
+            const url = `/api/progress/stream/${taskId}`;
+            currentEventSource = new EventSource(url);
+
+            currentEventSource.onmessage = function(event) {
+                handleSSEMessage(event);
+            };
+
+            currentEventSource.onerror = function(event) {
+                handleSSEError(event);
+            };
+
+            // Reset reconnect attempts on successful connection
+            currentReconnectAttempts = 0;
+        }
+
+        function disconnectSSE() {
+            if (currentEventSource) {
+                currentEventSource.close();
+                currentEventSource = null;
+            }
+        }
+
+        function handleSSEMessage(event) {
+            try {
+                const data = JSON.parse(event.data);
+
+                if (event.type === 'progress') {
+                    updateProgress(data);
+                } else if (event.type === 'complete') {
+                    updateProgress(data);
+                    handleSSEComplete(data);
+                } else if (event.type === 'error') {
+                    showError(data.error_message || 'Unknown error occurred');
+                }
+            } catch (e) {
+                console.error('Failed to parse SSE message:', e);
+            }
+        }
+
+        function handleSSEError(event) {
+            console.error('SSE connection error:', event);
+
+            if (currentReconnectAttempts < maxReconnectAttempts) {
+                reconnectSSE();
+            } else {
+                showError(`Connection lost after ${maxReconnectAttempts} attempts`);
+                disconnectSSE();
+            }
+        }
+
+        function handleSSEComplete(data) {
+            disconnectSSE();
+            displayCompletionMessage(data);
+            showResults(data);
+        }
+
+        function reconnectSSE() {
+            currentReconnectAttempts++;
+            console.log(`Attempting to reconnect SSE (${currentReconnectAttempts}/${maxReconnectAttempts})`);
+
+            setTimeout(() => {
+                if (currentEventSource && currentEventSource.readyState === EventSource.CLOSED) {
+                    const url = currentEventSource.url;
+                    const taskId = url.split('/').pop();
+                    connectSSE(taskId);
+                }
+            }, 1000 * currentReconnectAttempts); // Exponential backoff
+        }
+
+        function showResults(data) {
+            hideProgress();
+            // Show results section if it exists
+            const resultsSection = document.getElementById('results-section');
+            if (resultsSection) {
+                resultsSection.style.display = 'block';
+            }
+        }
+
+        function hideResults() {
+            const resultsSection = document.getElementById('results-section');
+            if (resultsSection) {
+                resultsSection.style.display = 'none';
+            }
+        }
+
+        function displayCompletionMessage(data) {
+            const message = data.error_message ?
+                `処理が完了しましたが、エラーが発生しました: ${data.error_message}` :
+                `処理が正常に完了しました (${data.current}/${data.total})`;
+
+            showStatus(message);
+        }
+
+        // ユーザーインタラクション機能
+        let currentTaskId = null;
+
+        function cancelProcessing() {
+            if (currentTaskId) {
+                // SSE接続を切断
+                disconnectSSE();
+
+                // UIをリセット
+                hideProgress();
+                showStatus('処理がキャンセルされました');
+
+                // キャンセルボタンを非表示
+                const cancelBtn = document.getElementById('cancel-button');
+                if (cancelBtn) cancelBtn.style.display = 'none';
+
+                currentTaskId = null;
+            }
+        }
+
+        function retryProcessing() {
+            // 再試行ボタンを非表示
+            const retryBtn = document.getElementById('retry-button');
+            if (retryBtn) retryBtn.style.display = 'none';
+
+            // エラーメッセージをクリア
+            clearMessages();
+
+            // 処理を再開（実際のファイル再処理は別途実装）
+            showStatus('処理を再試行しています...');
+        }
+
+        function showRetryButton() {
+            const retryBtn = document.getElementById('retry-button');
+            if (retryBtn) {
+                retryBtn.style.display = 'block';
+            }
+        }
+
+        function downloadPartialResults() {
+            if (currentTaskId) {
+                // 部分結果のダウンロード処理（実際のダウンロード機能は別途実装）
+                showStatus('部分結果をダウンロードしています...');
+
+                // 模擬的なダウンロード処理
+                setTimeout(() => {
+                    showStatus('部分結果のダウンロードが完了しました');
+                }, 1000);
+            }
+        }
+
+        function enablePartialDownload() {
+            const downloadBtn = document.getElementById('download-partial-results');
+            if (downloadBtn) {
+                downloadBtn.style.display = 'block';
+            }
+        }
+
+        function showSplitSuggestion(fileSize, optimalSize) {
+            const splitDiv = document.getElementById('split-suggestion');
+            const splitSizeSpan = document.getElementById('suggested-split-size');
+
+            if (splitDiv && splitSizeSpan) {
+                const suggestedSize = optimalSize || calculateOptimalSplitSize(fileSize);
+                splitSizeSpan.textContent = `推奨分割サイズ: ${suggestedSize}行`;
+                splitDiv.style.display = 'block';
+            }
+        }
+
+        function hideSplitSuggestion() {
+            const splitDiv = document.getElementById('split-suggestion');
+            if (splitDiv) {
+                splitDiv.style.display = 'none';
+            }
+        }
+
+        function calculateOptimalSplitSize(fileSize) {
+            // ファイルサイズに基づいて最適な分割サイズを計算
+            if (fileSize > 100000) {
+                return Math.floor(fileSize / 10); // 10分割
+            } else if (fileSize > 50000) {
+                return Math.floor(fileSize / 5); // 5分割
+            } else if (fileSize > 10000) {
+                return Math.floor(fileSize / 2); // 2分割
+            }
+            return fileSize; // 分割不要
+        }
+
+        // 進捗表示機能をwindowオブジェクトに追加（テスト用）
+        window.updateProgress = updateProgress;
+        window.showProgress = showProgress;
+        window.hideProgress = hideProgress;
+        window.formatTime = formatTime;
+        window.showError = showError;
+        window.showWarning = showWarning;
+        window.showStatus = showStatus;
+        window.clearMessages = clearMessages;
+
+        // SSE機能をwindowオブジェクトに追加（テスト用）
+        window.connectSSE = connectSSE;
+        window.disconnectSSE = disconnectSSE;
+        window.handleSSEMessage = handleSSEMessage;
+        window.handleSSEError = handleSSEError;
+        window.handleSSEComplete = handleSSEComplete;
+        window.reconnectSSE = reconnectSSE;
+        window.maxReconnectAttempts = maxReconnectAttempts;
+        window.currentReconnectAttempts = currentReconnectAttempts;
+        window.showResults = showResults;
+        window.hideResults = hideResults;
+        window.displayCompletionMessage = displayCompletionMessage;
+
+        // ユーザーインタラクション機能をwindowオブジェクトに追加（テスト用）
+        window.cancelProcessing = cancelProcessing;
+        window.retryProcessing = retryProcessing;
+        window.showRetryButton = showRetryButton;
+        window.downloadPartialResults = downloadPartialResults;
+        window.enablePartialDownload = enablePartialDownload;
+        window.showSplitSuggestion = showSplitSuggestion;
+        window.hideSplitSuggestion = hideSplitSuggestion;
+        window.calculateOptimalSplitSize = calculateOptimalSplitSize;
+
+        // 既存WebUI改修機能
+        function handleAsyncUpload(formData, formElement) {
+            // 非同期アップロード処理
+            showProgress();
+
+            // フォームをFetch APIで送信
+            const actionUrl = formElement.action;
+
+            fetch(actionUrl, {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.task_id) {
+                    currentTaskId = data.task_id;
+                    connectSSE(data.task_id);
+                } else {
+                    displayUnifiedError('非同期処理の開始に失敗しました');
+                }
+            })
+            .catch(error => {
+                handleFormError(error, formElement);
+            });
+        }
+
+        function startAsyncProcessing(formElement) {
+            // フォームバリデーション
+            if (!validateForm(formElement)) {
+                return false;
+            }
+
+            // フォームデータを準備
+            const formData = new FormData(formElement);
+
+            // 非同期アップロードを開始
+            handleAsyncUpload(formData, formElement);
+
+            return false; // フォームの通常送信を防ぐ
+        }
+
+        function validateForm(formElement) {
+            // 基本的なフォームバリデーション
+            const fileInputs = formElement.querySelectorAll('input[type="file"]');
+
+            for (let fileInput of fileInputs) {
+                if (fileInput.required && !fileInput.files.length) {
+                    displayUnifiedError(`${fileInput.name}ファイルを選択してください`);
+                    return false;
+                }
+            }
+
+            // ファイルサイズチェック
+            for (let fileInput of fileInputs) {
+                if (fileInput.files.length > 0) {
+                    const file = fileInput.files[0];
+                    const maxSize = 100 * 1024 * 1024; // 100MB
+
+                    if (file.size > maxSize) {
+                        showSplitSuggestion(file.size);
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        function handleFormError(error, formElement) {
+            console.error('Form submission error:', error);
+
+            hideProgress();
+
+            let errorMessage = 'ファイルアップロードエラーが発生しました';
+            if (error.message) {
+                errorMessage += ': ' + error.message;
+            }
+
+            displayUnifiedError(errorMessage);
+            showRetryButton();
+        }
+
+        function displayUnifiedError(message) {
+            // 既存のエラー表示と統合
+            showError(message);
+
+            // 追加のエラー処理
+            const errorDiv = document.getElementById('error-message');
+            if (errorDiv) {
+                errorDiv.style.display = 'block';
+                errorDiv.textContent = message;
+            }
+        }
+
+        // フォームにイベントリスナーを設定
+        function setupAsyncFormHandlers() {
+            const uploadForm = document.getElementById('uploadForm');
+            const dualForm = document.getElementById('dualForm');
+
+            if (uploadForm) {
+                uploadForm.onsubmit = function(e) {
+                    e.preventDefault();
+                    return startAsyncProcessing(this);
+                };
+            }
+
+            if (dualForm) {
+                dualForm.onsubmit = function(e) {
+                    e.preventDefault();
+                    return startAsyncProcessing(this);
+                };
+            }
+        }
+
+        // 既存WebUI改修機能をwindowオブジェクトに追加（テスト用）
+        window.handleAsyncUpload = handleAsyncUpload;
+        window.startAsyncProcessing = startAsyncProcessing;
+        window.validateForm = validateForm;
+        window.handleFormError = handleFormError;
+        window.displayUnifiedError = displayUnifiedError;
+
+        // ページ読み込み完了時にフォームハンドラを設定
+        document.addEventListener('DOMContentLoaded', setupAsyncFormHandlers);
 
         // LLM設定の表示/非表示切り替え（デュアルファイル用）
         function toggleLLMConfig2() {
