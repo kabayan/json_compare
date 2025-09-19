@@ -39,15 +39,15 @@ JSON Compare WebUIに、処理の進捗状況をリアルタイムで表示す�
 5. WHEN 処理速度が極端に遅い（1件/秒未満） THEN WebUI SHALL 警告メッセージを表示する
 
 ### Requirement 4: リアルタイム更新機構
-**目的:** WebUIユーザーとして、ページをリロードすることなく最新の進捗情報を確認したい。サーバーからの更新を自動的に受け取りたい。
+**目的:** WebUIユーザーとして、ページをリロードすることなく最新の進捗情報を確認したい。サーバーからの更新を定期的に取得したい。
 
 #### 受け入れ基準
 
-1. WHEN 処理が開始された THEN WebUI SHALL Server-Sent Events (SSE) またはWebSocket接続を確立する
-2. WHILE SSE/WebSocket接続がアクティブである THE サーバー SHALL 1秒ごとに進捗データを送信する
-3. IF ネットワーク接続が切断された THEN WebUI SHALL 自動的に再接続を試みる（最大5回）
-4. WHERE 複数のタブ/ウィンドウで同じ処理を監視している THE システム SHALL 全てのクライアントに同じ進捗情報を配信する
-5. WHEN 処理が完了または中断された THEN サーバー SHALL 最終ステータスを送信してSSE/WebSocket接続を終了する
+1. WHEN 処理が開始された THEN WebUI SHALL JavaScriptのsetIntervalを使用して定期的なポーリングを開始する
+2. WHILE 処理が実行中である THE WebUI SHALL 1秒ごとにAPIエンドポイントから進捗データを取得する
+3. IF APIリクエストがタイムアウトまたは失敗した THEN WebUI SHALL エラーをログに記録し、次回のポーリングまで待機する
+4. WHERE 進捗取得APIが呼ばれた THE サーバー SHALL タスクIDに基づいて現在の進捗状況を返却する
+5. WHEN 処理が完了または中断された THEN WebUI SHALL clearIntervalでポーリングを停止する
 
 ### Requirement 5: エラーハンドリングとユーザーフィードバック
 **目的:** WebUIユーザーとして、処理中に問題が発生した場合に適切な情報を受け取りたい。エラーの内容と対処方法を理解できるようにする。
@@ -70,3 +70,32 @@ JSON Compare WebUIに、処理の進捗状況をリアルタイムで表示す�
 3. IF 既存のメトリクス収集機能が有効である THEN システム SHALL 進捗データをメトリクスとして記録する
 4. WHERE エラーログが出力される THE システム SHALL エラー内容を進捗表示に反映する
 5. WHEN 処理が完了した THEN システム SHALL 既存のログローテーション機能に従って進捗ログを保存する
+
+### Requirement 7: API整合性とメタデータ一貫性
+**目的:** アーキテクトとして、WebUIがAPIラッパーとして正しく機能することを保証したい。APIレスポンスのメタデータや構造が、WebUIを通しても正確に維持されることを確実にする。
+
+#### 受け入れ基準
+
+1. WHEN WebUIがAPIから処理結果を受信した THEN WebUI SHALL APIレスポンスのすべてのフィールドを変更せずにそのまま表示する
+2. WHERE APIレスポンスにメタデータ（calculation_method、processing_time等）が含まれる THE WebUI SHALL これらのフィールド名と値を一切変更せずに保持する
+3. IF APIがcomparison_methodフィールドを返す THEN WebUI SHALL calculation_methodへの独自変換を行わずにcomparison_methodとして表示する
+4. WHEN WebUIが結果をJSONとして表示する THEN WebUI SHALL APIから受け取った正確なJSON構造を維持する
+5. WHERE WebUIがメタデータを表示する THE WebUI SHALL 独自のメタデータフィールドを追加せず、APIから受信したメタデータのみを表示する
+6. IF APIレスポンスに_metadataフィールドが存在する THEN WebUI SHALL その内容を変更・加工せずにそのまま表示する
+7. WHEN ユーザーがダウンロード機能を使用する THEN WebUI SHALL APIレスポンスの元のデータ構造を保持したファイルを提供する
+
+### Requirement 8: Playwright MCP包括テスト検証
+**目的:** QAエンジニアとして、WebUIの進捗表示機能およびポーリング実装が全ての比較モードと出力形式で正しく動作することを実機環境で検証したい。
+
+#### 受け入れ基準
+
+1. WHEN Playwright MCPテストを実行する THEN テストスイート SHALL 実際のWebUIに対して全パターンの組み合わせテストを実行する
+2. WHERE 1ファイル埋め込みモード比較を実行する THE テストシステム SHALL スコア形式とファイル形式の両方で進捗表示とポーリング動作を検証する
+3. WHERE 1ファイルLLMモード比較を実行する THE テストシステム SHALL スコア形式とファイル形式の両方でLLM処理の進捗表示を検証する
+4. WHERE 2ファイル埋め込みモード比較を実行する THE テストシステム SHALL デュアルファイル比較の進捗表示が正しく機能することを検証する
+5. WHERE 2ファイルLLMモード比較を実行する THE テストシステム SHALL デュアルファイルLLM比較の進捗表示とフォールバック処理を検証する
+6. IF ポーリングAPIが呼ばれた THEN テストシステム SHALL 1秒間隔でのAPI呼び出しと進捗データ更新が行われることを確認する
+7. WHEN 処理が完了した THEN テストシステム SHALL clearIntervalによるポーリング停止と結果表示の正確性を検証する
+8. IF 比較メソッドの識別が必要な場合 THEN テストシステム SHALL calculation_methodまたはcomparison_methodフィールドが正しく設定されていることを確認する
+9. WHERE エラーが発生した場合 THE テストシステム SHALL 最大5回のエラーまで自動リトライが機能し、適切なエラーメッセージが表示されることを検証する
+10. WHEN 全テストパターンが完了した THEN テストレポート SHALL 各パターンの成功/失敗状態と実行時間を記録する

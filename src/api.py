@@ -514,14 +514,21 @@ async def upload_file(
 
                 # メタデータを追加
                 if isinstance(result, dict):
+                    # resultに既にcalculation_methodがある場合はそれを使用
+                    existing_method = result.get("calculation_method", "embedding")
+
                     result["_metadata"] = {
                         "processing_time": f"{processing_time:.2f}秒",
                         "original_filename": file.filename,
                         "gpu_used": gpu,
-                        "calculation_method": "embedding"  # 埋め込みベースの計算方法を明示
+                        "calculation_method": existing_method  # 実際の推論方法を使用
                     }
                     if error_messages:
                         result["_metadata"]["data_repairs"] = len(error_messages)
+
+                    # calculation_methodがトップレベルにある場合は削除（_metadataに移動済み）
+                    if "calculation_method" in result:
+                        del result["calculation_method"]
 
                 # 成功をログに記録
                 logger.log_upload(
@@ -2049,107 +2056,265 @@ async def ui_form():
             if (statusDiv) statusDiv.style.display = 'none';
         }
 
-        // SSE クライアント機能
-        let currentEventSource = null;
-        let maxReconnectAttempts = 5;
+        // Polling クライアント機能
+        let currentPollingInterval = null;
+        let currentTaskId = null;
+        let pollingErrorCount = 0;
+        const maxPollingErrors = 5;
+
+        // SSE互換性のための変数（レガシー）
+        const maxReconnectAttempts = 5;
         let currentReconnectAttempts = 0;
 
-        function connectSSE(taskId) {
-            if (currentEventSource) {
-                disconnectSSE();
+        function startPolling(taskId) {
+            // 既存のポーリングがあれば停止
+            if (currentPollingInterval) {
+                stopPolling();
             }
 
-            const url = `/api/progress/stream/${taskId}`;
-            currentEventSource = new EventSource(url);
+            currentTaskId = taskId;
+            pollingErrorCount = 0;
 
-            // progress イベント用
-            currentEventSource.addEventListener('progress', function(event) {
+            // 1秒ごとにポーリング
+            currentPollingInterval = setInterval(async () => {
                 try {
-                    const data = JSON.parse(event.data);
+                    const response = await fetch(`/api/progress/${taskId}`);
+
+                    if (!response.ok) {
+                        if (response.status === 404) {
+                            console.error('Task not found:', taskId);
+                            stopPolling();
+                            showError('タスクが見つかりません');
+                            return;
+                        }
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+
+                    // 進捗更新
                     updateProgress(data);
-                } catch (e) {
-                    console.error('Failed to parse progress message:', e);
+
+                    // エラー状態の場合
+                    if (data.status === 'error') {
+                        stopPolling();
+                        showError(data.error_message || 'エラーが発生しました');
+                    }
+                    // 完了状態の場合
+                    else if (data.status === 'completed') {
+                        stopPolling();
+                        handlePollingComplete(data);
+                    }
+
+                    // エラーカウンターをリセット
+                    pollingErrorCount = 0;
+
+                } catch (error) {
+                    console.error('Polling error:', error);
+                    pollingErrorCount++;
+
+                    // 最大エラー数を超えた場合は停止
+                    if (pollingErrorCount >= maxPollingErrors) {
+                        stopPolling();
+                        showError(`接続エラーが続いたため、処理を停止しました (${pollingErrorCount}回連続失敗)`);
+                    }
                 }
-            });
+            }, 1000); // 1秒間隔
 
-            // complete イベント用
-            currentEventSource.addEventListener('complete', function(event) {
-                try {
-                    const data = JSON.parse(event.data);
-                    updateProgress(data);
-                    handleSSEComplete(data);
-                } catch (e) {
-                    console.error('Failed to parse complete message:', e);
-                }
-            });
-
-            // error イベント用
-            currentEventSource.addEventListener('error', function(event) {
-                try {
-                    const data = JSON.parse(event.data);
-                    showError(data.error_message || 'Unknown error occurred');
-                } catch (e) {
-                    console.error('Failed to parse error message:', e);
-                }
-            });
-
-            currentEventSource.onerror = function(event) {
-                handleSSEError(event);
-            };
-
-            // Reset reconnect attempts on successful connection
-            currentReconnectAttempts = 0;
+            console.log(`Started polling for task: ${taskId}`);
         }
 
-        function disconnectSSE() {
-            if (currentEventSource) {
-                currentEventSource.close();
-                currentEventSource = null;
+        function stopPolling() {
+            if (currentPollingInterval) {
+                clearInterval(currentPollingInterval);
+                currentPollingInterval = null;
+                console.log('Stopped polling');
             }
+            currentTaskId = null;
         }
 
 
         function handleSSEError(event) {
             console.error('SSE connection error:', event);
 
-            if (currentReconnectAttempts < maxReconnectAttempts) {
-                reconnectSSE();
+            // ポーリングエラーは自動的に処理される
+            console.log('Polling errors are handled automatically');
+        }
+
+        function handlePollingComplete(data) {
+            stopPolling();
+            displayCompletionMessage(data);
+
+            // ポーリング時は結果がdataに含まれている
+            if (data.result) {
+                showResults(data);  // data全体を渡す（data.resultではなく）
             } else {
-                showError(`Connection lost after ${maxReconnectAttempts} attempts`);
-                disconnectSSE();
+                showResults(data);
             }
         }
 
-        function handleSSEComplete(data) {
-            disconnectSSE();
-            displayCompletionMessage(data);
-            showResults(data);
-        }
-
-        function reconnectSSE() {
-            currentReconnectAttempts++;
-            console.log(`Attempting to reconnect SSE (${currentReconnectAttempts}/${maxReconnectAttempts})`);
-
-            setTimeout(() => {
-                if (currentEventSource && currentEventSource.readyState === EventSource.CLOSED) {
-                    const url = currentEventSource.url;
-                    const taskId = url.split('/').pop();
-                    connectSSE(taskId);
-                }
-            }, 1000 * currentReconnectAttempts); // Exponential backoff
-        }
+        // ポーリングモードでは再接続ロジックは不要（自動リトライ）
 
         function showResults(data) {
             hideProgress();
-            // Show results section if it exists
-            const resultsSection = document.getElementById('results-section');
-            if (resultsSection) {
-                resultsSection.style.display = 'block';
+
+            // 既存の結果セクションを削除
+            const existingResults = document.querySelectorAll('[id*="result"], [id*="complete-results"]');
+            existingResults.forEach(el => el.remove());
+
+            // 結果データがある場合のみ表示
+            if (data && data.result) {
+                // 新しい結果セクションを動的に作成
+                const resultDiv = document.createElement('div');
+                resultDiv.id = 'resultContainer';
+                resultDiv.style.cssText = 'padding: 20px; margin: 20px 0; border: 2px solid #28a745; border-radius: 8px; background: #f8fff9;';
+
+                let resultHTML = '';
+
+                // 配列形式（ファイル出力）かオブジェクト形式（スコア出力）かを判定
+                if (Array.isArray(data.result)) {
+                    // ファイル（詳細結果）形式の場合
+                    resultHTML = `
+                        <h3 style="color: #28a745; margin-bottom: 15px;">✅ 処理完了 - ファイル形式</h3>
+                        <div style="background: white; padding: 15px; border-radius: 6px; margin: 10px 0;">
+                            <h4>📊 詳細比較結果</h4>
+                            <p><strong>総レコード数:</strong> ${data.result.length}</p>
+                        </div>
+                        <div style="background: white; padding: 15px; border-radius: 6px; margin: 10px 0; max-height: 400px; overflow-y: auto;">
+                            <h4>📋 各レコードの詳細</h4>
+                            ${data.result.map((item, index) => {
+                                // inference1/2が文字列の場合はパースを試みる
+                                let inf1 = item.inference1;
+                                let inf2 = item.inference2;
+
+                                if (typeof inf1 === 'string') {
+                                    try {
+                                        inf1 = JSON.parse(inf1);
+                                    } catch (e) {
+                                        inf1 = {response: inf1};
+                                    }
+                                }
+                                if (typeof inf2 === 'string') {
+                                    try {
+                                        inf2 = JSON.parse(inf2);
+                                    } catch (e) {
+                                        inf2 = {response: inf2};
+                                    }
+                                }
+
+                                // 入力テキストの表示
+                                const inputText = item.input || '';
+
+                                // 推論結果の取得（response, text, scoreなど様々なフィールドに対応）
+                                const inf1Text = inf1?.response || inf1?.text || (typeof inf1 === 'object' ? JSON.stringify(inf1) : inf1) || 'N/A';
+                                const inf1Score = inf1?.score !== undefined ? inf1.score : '';
+                                const inf2Text = inf2?.response || inf2?.text || (typeof inf2 === 'object' ? JSON.stringify(inf2) : inf2) || 'N/A';
+                                const inf2Score = inf2?.score !== undefined ? inf2.score : '';
+
+                                return `
+                                <div style="border: 1px solid #ddd; padding: 10px; margin: 10px 0; border-radius: 4px;">
+                                    <h5>レコード ${index + 1}</h5>
+                                    ${inputText ? `<p><strong>入力:</strong> ${inputText.substring(0, 100)}${inputText.length > 100 ? '...' : ''}</p>` : ''}
+                                    <p><strong>推論1:</strong> ${inf1Text}</p>
+                                    ${inf1Score !== '' ? `<p><strong>推論1スコア:</strong> ${inf1Score}</p>` : ''}
+                                    <p><strong>推論2:</strong> ${inf2Text}</p>
+                                    ${inf2Score !== '' ? `<p><strong>推論2スコア:</strong> ${inf2Score}</p>` : ''}
+                                    <p><strong>類似度スコア:</strong> ${item.similarity_score !== undefined ? item.similarity_score : 'N/A'}</p>
+                                    <p><strong>フィールド一致率:</strong> ${item.similarity_details?.field_match_ratio !== undefined ? item.similarity_details.field_match_ratio : 'N/A'}</p>
+                                    <p><strong>値類似度:</strong> ${item.similarity_details?.value_similarity !== undefined ? item.similarity_details.value_similarity : 'N/A'}</p>
+                                </div>
+                            `;
+                            }).join('')}
+                        </div>
+                    `;
+                } else {
+                    // スコア（全体平均）形式の場合
+                    // LLMモードとEmbeddingモードで構造が異なる
+                    let score, meaning, totalLines, calculationMethod, processingTime, gpuUsed, outputType;
+                    let fieldMatchRatio = 'N/A', valueSimilarity = 'N/A', finalScore = 'N/A';
+
+                    if (data.result.summary) {
+                        // LLMモードの場合
+                        score = data.result.summary.average_score;
+                        totalLines = data.result.summary.total_comparisons;
+                        // スコアから意味を判定
+                        if (score >= 0.8) meaning = '高い類似度';
+                        else if (score >= 0.5) meaning = '中程度の類似度';
+                        else meaning = '低い類似度';
+
+                        calculationMethod = data.result._metadata?.calculation_method || 'N/A';
+                        processingTime = data.result._metadata?.processing_time || 'N/A';
+                        gpuUsed = data.result._metadata?.gpu_used ? 'Yes' : 'No';
+                        outputType = data.result._metadata?.output_type || 'N/A';
+
+                        // LLMモードの詳細データ（summaryから取得）
+                        fieldMatchRatio = data.result.summary.score_distribution ?
+                            `最高: ${data.result.summary.score_distribution.max}, 最低: ${data.result.summary.score_distribution.min}` :
+                            'N/A';
+                        valueSimilarity = data.result.summary.confidence_level || 'N/A';
+                        finalScore = data.result.summary.average_score || 'N/A';
+                    } else {
+                        // Embeddingモードの場合
+                        score = data.result.score;
+                        meaning = data.result.meaning;
+                        totalLines = data.result.total_lines;
+                        calculationMethod = data.result._metadata?.calculation_method || 'N/A';
+                        processingTime = data.result._metadata?.processing_time || 'N/A';
+                        gpuUsed = data.result._metadata?.gpu_used ? 'Yes' : 'No';
+                        outputType = data.result._metadata?.output_type || 'N/A';
+
+                        // 詳細データ
+                        fieldMatchRatio = data.result.json?.field_match_ratio || 'N/A';
+                        valueSimilarity = data.result.json?.value_similarity || 'N/A';
+                        finalScore = data.result.json?.final_score || 'N/A';
+                    }
+
+                    resultHTML = `
+                        <h3 style="color: #28a745; margin-bottom: 15px;">✅ 処理完了 - スコア形式</h3>
+                        <div style="background: white; padding: 15px; border-radius: 6px; margin: 10px 0;">
+                            <h4>📊 類似度結果</h4>
+                            <p><strong>スコア:</strong> <span style="font-size: 18px; color: #dc3545; font-weight: bold;">${score}</span></p>
+                            <p><strong>意味:</strong> ${meaning}</p>
+                            <p><strong>処理行数:</strong> ${totalLines}</p>
+                            <p><strong>計算方法:</strong> ${calculationMethod}</p>
+                            <p><strong>処理時間:</strong> ${processingTime}</p>
+                        </div>
+
+                        <div style="background: white; padding: 15px; border-radius: 6px; margin: 10px 0;">
+                            <h4>📋 詳細データ</h4>
+                            ${calculationMethod === 'llm' ? `
+                                <p><strong>スコア分布:</strong> ${fieldMatchRatio}</p>
+                                <p><strong>信頼度レベル:</strong> ${valueSimilarity}</p>
+                                <p><strong>平均スコア:</strong> ${finalScore}</p>
+                            ` : `
+                                <p><strong>フィールド一致率:</strong> ${fieldMatchRatio}</p>
+                                <p><strong>値類似度:</strong> ${valueSimilarity}</p>
+                                <p><strong>最終スコア:</strong> ${finalScore}</p>
+                            `}
+                        </div>
+
+                        <div style="background: #e9ecef; padding: 15px; border-radius: 6px; margin: 10px 0;">
+                            <h4>🔧 処理情報</h4>
+                            <p><strong>GPU使用:</strong> ${gpuUsed}</p>
+                            <p><strong>出力形式:</strong> ${outputType}</p>
+                        </div>
+                    `;
+                }
+
+                resultDiv.innerHTML = resultHTML;
+
+                // 結果をページの上部に挿入
+                document.body.insertBefore(resultDiv, document.body.firstChild);
+
+                console.log('Results displayed successfully:', data.result);
             }
+
+            // ダウンロードボタンは結果セクション内に含まれているため、ここでは処理不要
+            console.log('showResults function completed');
         }
 
         function hideResults() {
-            const resultsSection = document.getElementById('results-section');
+            const resultsSection = document.getElementById('resultContainer');
             if (resultsSection) {
                 resultsSection.style.display = 'none';
             }
@@ -2164,12 +2329,12 @@ async def ui_form():
         }
 
         // ユーザーインタラクション機能
-        let currentTaskId = null;
+        // currentTaskId は上で既に宣言済み
 
         function cancelProcessing() {
             if (currentTaskId) {
                 // SSE接続を切断
-                disconnectSSE();
+                stopPolling();
 
                 // UIをリセット
                 hideProgress();
@@ -2262,11 +2427,11 @@ async def ui_form():
         window.clearMessages = clearMessages;
 
         // SSE機能をwindowオブジェクトに追加（テスト用）
-        window.connectSSE = connectSSE;
-        window.disconnectSSE = disconnectSSE;
-        window.handleSSEError = handleSSEError;
-        window.handleSSEComplete = handleSSEComplete;
-        window.reconnectSSE = reconnectSSE;
+        // Polling functions for global access
+        window.startPolling = startPolling;
+        window.stopPolling = stopPolling;
+        window.handlePollingComplete = handlePollingComplete;
+        window.handleSSEError = handleSSEError; // Keep for compatibility
         window.maxReconnectAttempts = maxReconnectAttempts;
         window.currentReconnectAttempts = currentReconnectAttempts;
         window.showResults = showResults;
@@ -2299,7 +2464,7 @@ async def ui_form():
             .then(data => {
                 if (data.task_id) {
                     currentTaskId = data.task_id;
-                    connectSSE(data.task_id);
+                    startPolling(data.task_id);
                 } else {
                     displayUnifiedError('非同期処理の開始に失敗しました');
                 }
@@ -3047,13 +3212,16 @@ async def stream_progress(task_id: str, request: Request):
 
 @app.get("/api/progress/{task_id}")
 async def get_task_progress(task_id: str):
-    """特定タスクの進捗状況を取得"""
+    """特定タスクの進捗状況を取得（ポーリング用）
+
+    処理完了時は結果データも含めて返却する
+    """
     try:
         progress = progress_tracker.get_progress(task_id)
         if progress is None:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-        return {
+        response_data = {
             "task_id": progress.task_id,
             "current": progress.current,
             "total": progress.total,
@@ -3065,6 +3233,14 @@ async def get_task_progress(task_id: str):
             "processing_speed": progress.processing_speed,
             "slow_processing_warning": progress.slow_processing_warning
         }
+
+        # 処理完了時は結果データを含める
+        if progress.status == "completed" and task_id in progress_tracker.tasks:
+            task = progress_tracker.tasks[task_id]
+            if task.result:
+                response_data["result"] = task.result
+
+        return response_data
 
     except HTTPException:
         raise
@@ -3080,7 +3256,8 @@ async def get_task_progress(task_id: str):
 async def compare_async(
     file: UploadFile = File(...),
     type: str = Form("score"),
-    gpu: bool = Form(False)
+    gpu: bool = Form(False),
+    use_llm: bool = Form(False)
 ):
     """非同期でファイル比較を実行し、タスクIDを返す"""
     try:
@@ -3099,7 +3276,7 @@ async def compare_async(
 
         # バックグラウンドで比較処理を開始
         asyncio.create_task(
-            process_comparison_async(task_id, temp_file_path, type, gpu)
+            process_comparison_async(task_id, temp_file_path, type, gpu, use_llm)
         )
 
         return {
@@ -3115,7 +3292,7 @@ async def compare_async(
         raise HTTPException(status_code=500, detail=f"非同期処理の開始に失敗しました: {str(e)}")
 
 
-async def process_comparison_async(task_id: str, file_path: str, output_type: str, gpu: bool):
+async def process_comparison_async(task_id: str, file_path: str, output_type: str, gpu: bool, use_llm: bool = False):
     """バックグラウンドでファイル比較を実行"""
     start_time = time.time()
 
@@ -3126,14 +3303,63 @@ async def process_comparison_async(task_id: str, file_path: str, output_type: st
 
         # tqdm出力をキャプチャして進捗更新
         with tqdm_interceptor.capture_tqdm(task_id, progress_tracker):
-            # 実際の比較処理を実行
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, process_jsonl_file, file_path, output_type
-            )
+            # LLMベース判定を使用する場合
+            if use_llm:
+                # LLM付き処理を実行
+                config = {
+                    "type": output_type,
+                    "model": "qwen3-14b-awq",  # デフォルトモデル
+                    "temperature": 0.2,
+                    "max_tokens": 64
+                }
+                result = await process_jsonl_file_with_llm(file_path, config)
+                # 実際に使用された方法を判定（method_breakdownから）
+                if isinstance(result, dict):
+                    method_breakdown = result.get("summary", {}).get("method_breakdown", {})
+                    # 最も使用された方法を判定
+                    if method_breakdown:
+                        # embedding_fallbackがある場合はフォールバックが発生
+                        if "embedding_fallback" in method_breakdown:
+                            actual_method = "embedding_fallback"
+                        # llmが含まれていればLLM処理成功
+                        elif "llm" in method_breakdown:
+                            actual_method = "llm"
+                        # それ以外は埋め込みモード
+                        else:
+                            actual_method = "embedding"
+                    else:
+                        # method_breakdownがない場合はLLMとして扱う（後方互換性）
+                        actual_method = "llm"
+                    result["calculation_method"] = actual_method
+            else:
+                # 通常の埋め込みベース処理を実行
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, process_jsonl_file, file_path, output_type
+                )
+
+        # メタデータを追加
+        if isinstance(result, dict):
+            # resultに既にcalculation_methodがある場合はそれを使用
+            existing_method = result.get("calculation_method", "embedding")
+
+            # _metadataがまだ無い場合は新規作成、ある場合は更新
+            if "_metadata" not in result:
+                result["_metadata"] = {}
+
+            result["_metadata"].update({
+                "calculation_method": existing_method,  # 実際の推論方法を使用
+                "processing_time": f"{time.time() - start_time:.2f}秒",
+                "gpu_used": gpu,
+                "output_type": output_type
+            })
+
+            # calculation_methodがトップレベルにある場合は削除（_metadataに移動済み）
+            if "calculation_method" in result and result["calculation_method"] == existing_method:
+                del result["calculation_method"]
 
         # 処理完了
         duration = time.time() - start_time
-        progress_tracker.complete_task(task_id, success=True)
+        progress_tracker.complete_task(task_id, success=True, result_data=result)
         progress_tracker.log_task_completion(task_id, success=True, duration=duration)
 
         # メトリクス記録
@@ -3234,7 +3460,7 @@ async def process_dual_comparison_async(
 
         # 処理完了
         duration = time.time() - start_time
-        progress_tracker.complete_task(task_id, success=True)
+        progress_tracker.complete_task(task_id, success=True, result_data=result)
         progress_tracker.log_task_completion(task_id, success=True, duration=duration)
 
         # メトリクス記録

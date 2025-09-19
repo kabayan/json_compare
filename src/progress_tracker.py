@@ -196,13 +196,14 @@ class ProgressTracker:
             slow_processing_warning=slow_processing_warning
         )
 
-    def complete_task(self, task_id: str, success: bool = True, error_message: Optional[str] = None) -> None:
+    def complete_task(self, task_id: str, success: bool = True, error_message: Optional[str] = None, result_data: Optional[Dict] = None) -> None:
         """Mark a task as completed or failed.
 
         Args:
             task_id: Task ID to complete
             success: True for successful completion, False for error
             error_message: Error message if success is False
+            result_data: Result data to store with the task
         """
         if task_id not in self.tasks:
             return
@@ -215,6 +216,7 @@ class ProgressTracker:
 
         if success:
             task.status = "completed"
+            task.result = result_data
         else:
             task.status = "error"
             task.error = error_message
@@ -277,6 +279,12 @@ class ProgressTracker:
                     "elapsed_seconds": progress.elapsed_time,
                     "status": progress.status
                 }
+
+                # Include result data for completed tasks
+                if event_type == "complete" and task_id in self.tasks:
+                    task = self.tasks[task_id]
+                    if task.result is not None:
+                        event_data["result"] = task.result
 
                 if progress.estimated_remaining is not None:
                     event_data["remaining_seconds"] = progress.estimated_remaining

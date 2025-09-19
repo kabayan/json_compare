@@ -143,6 +143,7 @@ def process_jsonl_file(file_path: str, output_type: str) -> Any:
                 "total_lines": total_lines,
                 "score": round(avg_score, 4),
                 "meaning": meaning,
+                "calculation_method": "embedding",  # 埋め込みベースの計算方法
                 "json": {
                     "field_match_ratio": round(avg_field_match, 4),
                     "value_similarity": round(avg_value_sim, 4),

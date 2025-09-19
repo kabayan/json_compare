@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Any, Union, Callable
 from dataclasses import dataclass, field
 from functools import wraps
 import json
-from tqdm.asyncio import tqdm
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -260,22 +260,23 @@ class LLMClient:
                 try:
                     return await asyncio.wait_for(response_task, timeout=5.0)
                 except asyncio.TimeoutError:
-                    # 5秒を超えた場合はプログレスバーを表示
-                    async with tqdm(desc="LLM処理中...", unit="秒") as progress:
-                        # 新しいタスクを作成（再利用問題を回避）
-                        new_response_task = self._retry_with_backoff(
-                            self._client.post,
-                            self.config.api_url,
-                            json=request_data,
-                            headers=self._get_headers()
-                        )
-                        try:
-                            response = await new_response_task
-                            progress.set_description("LLM処理完了")
-                            return response
-                        except Exception:
-                            progress.set_description("LLM処理エラー")
-                            raise
+                    # 5秒を超えた場合はログを出力
+                    logger.info("LLM処理中... (5秒以上かかっています)")
+
+                    # 新しいタスクを作成（再利用問題を回避）
+                    new_response_task = self._retry_with_backoff(
+                        self._client.post,
+                        self.config.api_url,
+                        json=request_data,
+                        headers=self._get_headers()
+                    )
+                    try:
+                        response = await new_response_task
+                        logger.info("LLM処理完了")
+                        return response
+                    except Exception as e:
+                        logger.error(f"LLM処理エラー: {e}")
+                        raise
 
             response = await api_call_with_progress()
 
