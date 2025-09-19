@@ -16,9 +16,10 @@ from typing import Optional, Union, Dict, Any, List
 import numpy as np
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
-from fastapi.responses import JSONResponse, HTMLResponse, Response
+from fastapi.responses import JSONResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sse_starlette import EventSourceResponse
 
 # 既存実装から関数をインポート
 from .__main__ import process_jsonl_file
@@ -37,10 +38,17 @@ from .logger import (
     MetricsCollector
 )
 
+# 進捗トラッカーのインポート
+from .progress_tracker import ProgressTracker, TqdmInterceptor
+
 # ロガーの初期化
 logger = get_logger()
 request_logger = get_request_logger()
 metrics_collector = get_metrics_collector()
+
+# グローバル進捗トラッカーの初期化
+progress_tracker = ProgressTracker()
+tqdm_interceptor = TqdmInterceptor()
 
 
 app = FastAPI(
@@ -1618,7 +1626,7 @@ async def ui_form():
         </div>
 
         <!-- 単一ファイルモード -->
-        <form id="uploadForm" action="/api/compare" method="post" enctype="multipart/form-data" class="mode-form active" data-mode="single">
+        <form id="uploadForm" action="/api/compare/async" method="post" enctype="multipart/form-data" class="mode-form active" data-mode="single">
             <div class="form-group">
                 <label for="file">JSONLファイルを選択</label>
                 <div class="file-input-wrapper">
@@ -2054,9 +2062,36 @@ async def ui_form():
             const url = `/api/progress/stream/${taskId}`;
             currentEventSource = new EventSource(url);
 
-            currentEventSource.onmessage = function(event) {
-                handleSSEMessage(event);
-            };
+            // progress イベント用
+            currentEventSource.addEventListener('progress', function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    updateProgress(data);
+                } catch (e) {
+                    console.error('Failed to parse progress message:', e);
+                }
+            });
+
+            // complete イベント用
+            currentEventSource.addEventListener('complete', function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    updateProgress(data);
+                    handleSSEComplete(data);
+                } catch (e) {
+                    console.error('Failed to parse complete message:', e);
+                }
+            });
+
+            // error イベント用
+            currentEventSource.addEventListener('error', function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    showError(data.error_message || 'Unknown error occurred');
+                } catch (e) {
+                    console.error('Failed to parse error message:', e);
+                }
+            });
 
             currentEventSource.onerror = function(event) {
                 handleSSEError(event);
@@ -2073,22 +2108,6 @@ async def ui_form():
             }
         }
 
-        function handleSSEMessage(event) {
-            try {
-                const data = JSON.parse(event.data);
-
-                if (event.type === 'progress') {
-                    updateProgress(data);
-                } else if (event.type === 'complete') {
-                    updateProgress(data);
-                    handleSSEComplete(data);
-                } else if (event.type === 'error') {
-                    showError(data.error_message || 'Unknown error occurred');
-                }
-            } catch (e) {
-                console.error('Failed to parse SSE message:', e);
-            }
-        }
 
         function handleSSEError(event) {
             console.error('SSE connection error:', event);
@@ -2245,7 +2264,6 @@ async def ui_form():
         // SSE機能をwindowオブジェクトに追加（テスト用）
         window.connectSSE = connectSSE;
         window.disconnectSSE = disconnectSSE;
-        window.handleSSEMessage = handleSSEMessage;
         window.handleSSEError = handleSSEError;
         window.handleSSEComplete = handleSSEComplete;
         window.reconnectSSE = reconnectSSE;
@@ -2437,179 +2455,6 @@ async def ui_form():
             });
         }
 
-        // 単一ファイルフォーム送信処理
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-
-            const formData = new FormData(form);
-
-            // チェックボックスの値を調整
-            if (!document.getElementById('gpu').checked) {
-                formData.set('gpu', 'false');
-            }
-
-            // UI状態の更新
-            submitButton.disabled = true;
-            loading.classList.add('active');
-            resultContainer.classList.remove('active');
-
-            try {
-                // LLMチェックボックスの状態に応じてエンドポイントを選択
-                const useLLM = document.getElementById('use_llm').checked;
-                const endpoint = useLLM ? '/api/compare/llm' : '/api/compare/single';
-
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    body: formData
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    // 成功時の処理
-                    lastResult = data;
-                    resultTitle.textContent = '✅ 処理完了';
-                    resultContent.textContent = JSON.stringify(data, null, 2);
-                    resultContainer.classList.remove('error');
-                    resultContainer.classList.add('active');
-
-                    // ダウンロードボタンの設定
-                    lastType = formData.get('type');
-                    downloadButtons.style.display = 'flex';
-
-                    // JSONダウンロードボタン
-                    const jsonBlob = new Blob([JSON.stringify(data, null, 2)],
-                                         { type: 'application/json' });
-                    const jsonUrl = URL.createObjectURL(jsonBlob);
-                    downloadJsonButton.href = jsonUrl;
-                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-                    downloadJsonButton.download = `result_${timestamp}.json`;
-
-                    // CSVダウンロードボタン
-                    downloadCsvButton.onclick = async (e) => {
-                        e.preventDefault();
-                        const csvContent = convertToCSV(data, lastType);
-                        const csvBlob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                        const csvUrl = URL.createObjectURL(csvBlob);
-                        const a = document.createElement('a');
-                        a.href = csvUrl;
-                        a.download = `result_${timestamp}.csv`;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(csvUrl);
-                    };
-
-                } else {
-                    // エラー時の処理
-                    resultTitle.textContent = '❌ エラーが発生しました';
-                    resultContent.textContent = data.detail ?
-                        `${data.detail.error}: ${data.detail.detail}` :
-                        JSON.stringify(data, null, 2);
-                    resultContainer.classList.add('error');
-                    resultContainer.classList.add('active');
-                    downloadButtons.style.display = 'none';
-                }
-            } catch (error) {
-                // ネットワークエラーなど
-                resultTitle.textContent = '❌ 通信エラー';
-                resultContent.textContent = `エラー: ${error.message}`;
-                resultContainer.classList.add('error');
-                resultContainer.classList.add('active');
-                downloadButtons.style.display = 'none';
-            } finally {
-                loading.classList.remove('active');
-                submitButton.disabled = false;
-            }
-        });
-
-        // 2ファイルフォーム送信処理
-        dualForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-
-            const formData = new FormData(dualForm);
-
-            // チェックボックスの値を調整
-            if (!document.getElementById('gpu2').checked) {
-                formData.set('gpu', 'false');
-            }
-
-            // UI状態の更新
-            dualSubmitButton.disabled = true;
-            loading.classList.add('active');
-            resultContainer.classList.remove('active');
-
-            try {
-                // LLMチェックボックスの状態に応じてエンドポイントを選択
-                const useLLM = document.getElementById('use_llm2').checked;
-                const endpoint = useLLM ? '/api/compare/dual/llm' : '/api/compare/dual';
-
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    body: formData
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    // 成功時の処理
-                    lastResult = data;
-                    resultTitle.textContent = '✅ 2ファイル比較完了';
-                    resultContent.textContent = JSON.stringify(data, null, 2);
-                    resultContainer.classList.remove('error');
-                    resultContainer.classList.add('active');
-
-                    // ダウンロードボタンの設定
-                    lastType = formData.get('type');
-                    downloadButtons.style.display = 'flex';
-
-                    // JSONダウンロードボタン
-                    const jsonBlob = new Blob([JSON.stringify(data, null, 2)],
-                                         { type: 'application/json' });
-                    const jsonUrl = URL.createObjectURL(jsonBlob);
-                    downloadJsonButton.href = jsonUrl;
-                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-                    downloadJsonButton.download = `dual_result_${timestamp}.json`;
-
-                    // CSVダウンロードボタン
-                    downloadCsvButton.onclick = async (e) => {
-                        e.preventDefault();
-                        const csvContent = convertToCSV(data, lastType);
-                        const csvBlob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                        const csvUrl = URL.createObjectURL(csvBlob);
-                        const a = document.createElement('a');
-                        a.href = csvUrl;
-                        a.download = `dual_result_${timestamp}.csv`;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(csvUrl);
-                    };
-
-                } else {
-                    // エラー時の処理
-                    resultTitle.textContent = '❌ エラーが発生しました';
-                    resultContent.textContent = data.detail ?
-                        (typeof data.detail === 'object' ?
-                            `${data.detail.error || 'Error'}: ${data.detail.detail || JSON.stringify(data.detail)}` :
-                            data.detail) :
-                        JSON.stringify(data, null, 2);
-                    resultContainer.classList.add('error');
-                    resultContainer.classList.add('active');
-                    downloadButtons.style.display = 'none';
-                }
-            } catch (error) {
-                // ネットワークエラーなど
-                resultTitle.textContent = '❌ 通信エラー';
-                resultContent.textContent = `エラー: ${error.message}`;
-                resultContainer.classList.add('error');
-                resultContainer.classList.add('active');
-                downloadButtons.style.display = 'none';
-            } finally {
-                loading.classList.remove('active');
-                dualSubmitButton.disabled = false;
-            }
-        });
 
         // CSV変換関数
         function convertToCSV(data, type) {
@@ -3167,6 +3012,257 @@ async def list_prompts():
         logger.log_error(error_id, "prompt_list_error", str(e), context={"request_type": "prompt_list"})
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# === WebUI進捗表示システム: SSE配信とタスク管理API ===
+
+@app.get("/api/progress/stream/{task_id}")
+async def stream_progress(task_id: str, request: Request):
+    """SSE (Server-Sent Events) で進捗をリアルタイム配信"""
+
+    async def event_generator():
+        try:
+            # 進捗をストリーミング
+            async for event in progress_tracker.stream_progress(task_id, timeout=300.0):
+                # クライアント接続確認
+                if await request.is_disconnected():
+                    break
+
+                yield event
+
+        except Exception as e:
+            error_id = str(uuid.uuid4())
+            logger.log_error(error_id, "sse_streaming_error", str(e), context={
+                "task_id": task_id
+            })
+            yield {
+                "event": "error",
+                "data": json.dumps({
+                    "error_message": f"ストリーミングエラーが発生しました: {str(e)}",
+                    "error_id": error_id
+                })
+            }
+
+    return EventSourceResponse(event_generator())
+
+
+@app.get("/api/progress/{task_id}")
+async def get_task_progress(task_id: str):
+    """特定タスクの進捗状況を取得"""
+    try:
+        progress = progress_tracker.get_progress(task_id)
+        if progress is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+        return {
+            "task_id": progress.task_id,
+            "current": progress.current,
+            "total": progress.total,
+            "percentage": progress.percentage,
+            "elapsed_seconds": progress.elapsed_time,
+            "estimated_remaining_seconds": progress.estimated_remaining,
+            "status": progress.status,
+            "error_message": progress.error_message,
+            "processing_speed": progress.processing_speed,
+            "slow_processing_warning": progress.slow_processing_warning
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_id = str(uuid.uuid4())
+        logger.log_error(error_id, "progress_get_error", str(e), context={
+            "task_id": task_id
+        })
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/compare/async")
+async def compare_async(
+    file: UploadFile = File(...),
+    type: str = Form("score"),
+    gpu: bool = Form(False)
+):
+    """非同期でファイル比較を実行し、タスクIDを返す"""
+    try:
+        # ファイルを一時保存
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.jsonl', delete=False) as temp_file:
+            content = await file.read()
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+
+        # ファイル行数を推定してタスクを作成
+        with open(temp_file_path, 'r', encoding='utf-8') as f:
+            total_lines = sum(1 for _ in f)
+
+        # 進捗トラッカーにタスクを作成（タスクIDを取得）
+        task_id = progress_tracker.create_task(total_items=total_lines)
+
+        # バックグラウンドで比較処理を開始
+        asyncio.create_task(
+            process_comparison_async(task_id, temp_file_path, type, gpu)
+        )
+
+        return {
+            "task_id": task_id,
+            "message": "比較処理を開始しました",
+            "total_items": total_lines,
+            "status": "processing"
+        }
+
+    except Exception as e:
+        error_id = str(uuid.uuid4())
+        logger.log_error(error_id, "async_compare_start_error", str(e))
+        raise HTTPException(status_code=500, detail=f"非同期処理の開始に失敗しました: {str(e)}")
+
+
+async def process_comparison_async(task_id: str, file_path: str, output_type: str, gpu: bool):
+    """バックグラウンドでファイル比較を実行"""
+    start_time = time.time()
+
+    try:
+        # GPU設定
+        if gpu:
+            set_gpu_mode(True)
+
+        # tqdm出力をキャプチャして進捗更新
+        with tqdm_interceptor.capture_tqdm(task_id, progress_tracker):
+            # 実際の比較処理を実行
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, process_jsonl_file, file_path, output_type
+            )
+
+        # 処理完了
+        duration = time.time() - start_time
+        progress_tracker.complete_task(task_id, success=True)
+        progress_tracker.log_task_completion(task_id, success=True, duration=duration)
+
+        # メトリクス記録
+        progress_tracker.record_metrics(task_id, {
+            "output_type": output_type,
+            "gpu_enabled": gpu,
+            "processing_duration": duration,
+            "result_count": len(result) if isinstance(result, list) else 1
+        })
+
+    except Exception as e:
+        duration = time.time() - start_time
+        error_message = f"比較処理エラー: {str(e)}"
+
+        progress_tracker.complete_task(task_id, success=False, error_message=error_message)
+        progress_tracker.log_task_completion(task_id, success=False, duration=duration)
+        progress_tracker.log_error(task_id, error_message, e)
+
+    finally:
+        # 一時ファイルをクリーンアップ
+        try:
+            os.unlink(file_path)
+        except:
+            pass
+
+
+@app.post("/api/compare/dual/async")
+async def compare_dual_async(
+    file1: UploadFile = File(...),
+    file2: UploadFile = File(...),
+    column1: str = Form("inference1"),
+    column2: str = Form("inference2"),
+    output_type: str = Form("score"),
+    gpu: bool = Form(False)
+):
+    """非同期で2ファイル比較を実行し、タスクIDを返す"""
+    try:
+        # タスクIDを生成
+        task_id = str(uuid.uuid4())
+
+        # ファイルを一時保存
+        temp_files = []
+        for file in [file1, file2]:
+            with tempfile.NamedTemporaryFile(mode='wb', suffix='.jsonl', delete=False) as temp_file:
+                content = await file.read()
+                temp_file.write(content)
+                temp_files.append(temp_file.name)
+
+        # ファイル行数を推定してタスクを作成
+        with open(temp_files[0], 'r', encoding='utf-8') as f:
+            total_lines = sum(1 for _ in f)
+
+        # 進捗トラッカーにタスクを作成
+        progress_tracker.create_task(total_items=total_lines)
+        progress_tracker.log_task_creation(task_id, total_lines)
+
+        # バックグラウンドで比較処理を開始
+        asyncio.create_task(
+            process_dual_comparison_async(
+                task_id, temp_files[0], temp_files[1], column1, column2, output_type, gpu
+            )
+        )
+
+        return {
+            "task_id": task_id,
+            "message": "2ファイル比較処理を開始しました",
+            "total_items": total_lines,
+            "status": "processing"
+        }
+
+    except Exception as e:
+        error_id = str(uuid.uuid4())
+        logger.log_error(error_id, "async_dual_compare_start_error", str(e))
+        raise HTTPException(status_code=500, detail=f"非同期処理の開始に失敗しました: {str(e)}")
+
+
+async def process_dual_comparison_async(
+    task_id: str, file1_path: str, file2_path: str, column1: str, column2: str, output_type: str, gpu: bool
+):
+    """バックグラウンドで2ファイル比較を実行"""
+    start_time = time.time()
+
+    try:
+        # GPU設定
+        if gpu:
+            set_gpu_mode(True)
+
+        # DualFileExtractorで処理
+        extractor = DualFileExtractor()
+
+        # tqdm出力をキャプチャして進捗更新
+        with tqdm_interceptor.capture_tqdm(task_id, progress_tracker):
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                extractor.process,
+                file1_path, file2_path, column1, column2, output_type
+            )
+
+        # 処理完了
+        duration = time.time() - start_time
+        progress_tracker.complete_task(task_id, success=True)
+        progress_tracker.log_task_completion(task_id, success=True, duration=duration)
+
+        # メトリクス記録
+        progress_tracker.record_metrics(task_id, {
+            "comparison_type": "dual_file",
+            "column1": column1,
+            "column2": column2,
+            "output_type": output_type,
+            "gpu_enabled": gpu,
+            "processing_duration": duration,
+            "result_count": len(result) if isinstance(result, list) else 1
+        })
+
+    except Exception as e:
+        duration = time.time() - start_time
+        error_message = f"2ファイル比較処理エラー: {str(e)}"
+
+        progress_tracker.complete_task(task_id, success=False, error_message=error_message)
+        progress_tracker.log_task_completion(task_id, success=False, duration=duration)
+        progress_tracker.log_error(task_id, error_message, e)
+
+    finally:
+        # 一時ファイルをクリーンアップ
+        for file_path in [file1_path, file2_path]:
+            try:
+                os.unlink(file_path)
+            except:
+                pass
 
 
 def main():

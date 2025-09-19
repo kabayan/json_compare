@@ -117,7 +117,8 @@ class ProgressTracker:
         if task.status in ["completed", "error"]:
             return
 
-        # Cap current at total
+        # Ensure current is not negative and cap at total
+        current = max(0, current)  # Prevent negative values
         if task.total_items > 0:
             current = min(current, task.total_items)
         else:
