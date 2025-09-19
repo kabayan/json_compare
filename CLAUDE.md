@@ -20,6 +20,7 @@ Kiro-style Spec Driven Development implementation using claude code slash comman
 - **api-file-upload**: HTMLフォームからのファイルアップロード機能 (initialized)
 - **dual-file-inference-compare**: 2つのJSONLファイルのinference列比較機能（CLI/WebUI/API対応） (initialized)
 - **llm-similarity-vllm**: vLLM APIを使用したLLMベース類似度判定機能（オプション） (initialized)
+- **webui-playwright-mcp-testing**: WebUIのPlaywright MCP統合テスト (tasks-generated, ready for implementation)
 
 ## Development Guidelines
 - Think in English, but generate responses in Japanese (思考は英語、回答の生成は日本語で行うように)
@@ -57,6 +58,7 @@ Managed by `/kiro:steering` command. Updates here reflect command changes.
 - Created: 2025-01-17 - Initial steering documents for JSON Compare project
 - Updated: 2025-09-17 - API実装完了、ポート設定更新（18081）
 - Updated: 2025-09-18 - Web UI機能、2ファイル比較、ログシステム、テスト基盤追加
+- Updated: 2025-09-18 - Playwright MCP統合（導入済み、軽量ラッパー実装）
 
 ### Active Steering Files
 - `product.md`: Always included - Product context and business objectives

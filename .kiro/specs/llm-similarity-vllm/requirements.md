@@ -81,3 +81,32 @@ JSON Compareツールに、既存の埋め込みベースの類似度計算に�
 3. WHEN 設定ファイルに不正な値が含まれる場合 THEN json_compare SHALL 詳細なバリデーションエラーを表示する
 4. WHERE 環境変数が設定されている場合 THE json_compare SHALL 環境変数 > CLIオプション > 設定ファイルの優先順位で値を適用する
 5. WHEN `--save-config` フラグが指定された場合 THEN json_compare SHALL 現在の設定を設定ファイルに保存する
+
+### Requirement 8: 比較方法の明示的識別と結果差別化
+**Objective:** データサイエンティストとして、LLMベースと埋め込みベースの比較結果を明確に区別したい、同一データで異なる手法が同じ結果を出力する問題を解決するため
+
+#### Acceptance Criteria
+
+1. WHEN 類似度計算を実行する場合 THEN json_compare SHALL 出力結果に使用した比較手法を明示する `comparison_method` フィールドを含める（値："embedding" または "llm"）
+2. IF LLMベース判定と埋め込みベース判定を同一データで実行した場合 THEN システム SHALL 異なるスコア値を生成することを保証する
+3. WHEN LLMベース判定を使用する場合 THEN システム SHALL 追加のメタデータを出力に含める：
+   - `llm_model_name`: 使用したLLMモデル名
+   - `prompt_template`: 使用したプロンプトテンプレート名
+   - `llm_response_time`: LLM API応答時間（秒）
+   - `llm_raw_response`: LLMの生の応答テキスト（デバッグ用）
+4. WHERE 埋め込みベース判定を使用する場合 THE システム SHALL 対応するメタデータを出力に含める：
+   - `embedding_model_name`: 使用した埋め込みモデル名
+   - `similarity_algorithm`: 類似度計算アルゴリズム（例："cosine_similarity"）
+   - `embedding_dimension`: 埋め込みベクトルの次元数
+5. WHEN スコア値が期待範囲外（0.0未満または1.0超過）の場合 THEN システム SHALL 警告メッセージを出力し、値を0.0-1.0の範囲にクランプする
+
+### Requirement 9: 結果検証と品質保証
+**Objective:** 品質保証エンジニアとして、LLMベースと埋め込みベースの計算結果の妥当性を検証したい、システムの信頼性を保証するため
+
+#### Acceptance Criteria
+
+1. WHEN 完全に同一のテキストペアを比較する場合 THEN 両手法とも1.0に近いスコア（≥0.95）を出力することを保証する
+2. IF 明らかに異なるテキストペア（共通語彙なし）を比較する場合 THEN 両手法とも低いスコア（≤0.3）を出力することを保証する
+3. WHEN LLMベース判定でスコア抽出に失敗した場合 THEN システム SHALL エラーログに詳細情報を記録し、明示的な失敗マーカー（"PARSE_FAILED"）を出力する
+4. WHERE 同一入力でLLMベースと埋め込みベースのスコア差が0.05未満の場合 THE システム SHALL 警告ログを出力し、結果妥当性の確認を促す
+5. WHEN バッチ処理中にスコア値の統計的分布が異常な場合（全て同一値、極端な偏り） THEN システム SHALL 統計レポートを生成し、計算方法の確認を推奨する

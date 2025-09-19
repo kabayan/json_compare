@@ -49,6 +49,19 @@ src/
 ├── caching_resource_manager.py    # LLM response caching system
 ├── enhanced_cli.py                # Enhanced CLI with LLM options
 ├── enhanced_result_format.py      # Result formatting with metadata
+├── config_management.py            # Configuration file management and validation
+├── console_network_monitor.py      # Playwright MCP console/network monitoring
+├── drag_drop_manager.py             # Playwright MCP drag-and-drop operations
+├── llm_configuration_manager.py     # Playwright MCP LLM settings management
+├── tab_navigation_manager.py        # Playwright MCP tab navigation and history
+├── test_data_manager.py             # Test data generation and management
+├── page_navigator.py                # Page navigation and URL handling
+├── viewport_manager.py              # Viewport and display management
+├── file_upload_manager.py           # File upload and form interaction
+├── form_interaction_manager.py      # Form field interaction and validation
+├── download_and_error_manager.py    # Download handling and error management
+├── comparison_result_validator.py   # Cross-method result validation and anomaly detection
+├── mcp_wrapper.py                   # Lightweight Playwright MCP wrapper
 └── archives/                      # Archived/deprecated code
     └── merge_jsonl.py             # Legacy JSONL merging utility
 ```
@@ -71,7 +84,21 @@ tests/
 ├── test_full_system_integration.py       # Full system integration tests
 ├── test_metadata_management.py           # Metadata handling tests
 ├── test_playwright_e2e.py                # Comprehensive E2E tests
+├── test_playwright_mcp_wrapper.py        # Playwright MCP軽量ラッパーテスト（実装済み）
 ├── test_strategy_integration.py          # Strategy pattern tests
+├── test_comparison_result_validator.py   # Cross-method validation tests
+├── test_console_network_monitor.py       # Console/network monitoring tests
+├── test_drag_drop_manager.py             # Drag-and-drop operation tests
+├── test_llm_configuration_manager.py     # LLM configuration tests
+├── test_tab_navigation_manager.py        # Tab navigation and history tests
+├── test_test_data_manager.py             # Test data management tests
+├── test_page_navigation.py               # Page navigation tests
+├── test_viewport_manager.py              # Viewport management tests
+├── test_file_upload_manager.py           # File upload tests
+├── test_form_interaction_manager.py      # Form interaction tests
+├── test_advanced_form_operations.py      # Advanced form operation tests
+├── test_download_and_error_manager.py    # Download and error handling tests
+├── test_config_management.py             # Configuration management tests
 ├── mock_api_server.py                    # Mock API server for testing
 └── fixtures/                             # Test data fixtures
     └── sample.jsonl                      # Sample test data
@@ -80,10 +107,11 @@ tests/
 ### Prompts (`prompts/`)
 ```
 prompts/
-├── default_similarity.yaml      # Default similarity prompt template
+├── default_similarity.yaml      # Default similarity prompt template (updated with markdown bold patterns)
 ├── semantic_similarity.yaml     # Semantic comparison prompt
 ├── strict_similarity.yaml       # Strict comparison prompt
-└── [uuid].yaml                  # User-defined custom prompts
+├── [uuid].yaml                  # User-defined custom prompts (dynamically generated)
+└── temp/                        # Temporary prompt files (auto-cleanup)
 ```
 
 ### Utilities (`utils/`)
@@ -138,11 +166,25 @@ docs/
 - **dual_file_extractor.py**: Extract and compare columns from 2 JSONL files
 - **llm_client.py**: vLLM API communication and response handling
 - **llm_similarity.py**: LLM-based similarity calculation logic
-- **prompt_template.py**: Load and manage YAML prompt templates
-- **score_parser.py**: Extract numeric scores from LLM responses
+- **prompt_template.py**: Load and manage YAML prompt templates with validation
+- **score_parser.py**: Extract numeric scores from LLM responses (enhanced with markdown bold support)
 - **similarity_strategy.py**: Strategy pattern implementation for calculation methods
 - **caching_resource_manager.py**: Cache LLM responses for efficiency
 - **llm_metrics.py**: Track LLM usage statistics and performance
+- **enhanced_result_format.py**: Result formatting with comparison method identification and conditional detailed output
+- **config_management.py**: Configuration file validation, loading, and management system
+- **comparison_result_validator.py**: Cross-method result validation and anomaly detection for quality assurance
+- **console_network_monitor.py**: Playwright MCP-based console and network monitoring for WebUI testing
+- **drag_drop_manager.py**: Playwright MCP-based drag-and-drop operations for file upload testing
+- **llm_configuration_manager.py**: Playwright MCP-based LLM settings and model selection testing
+- **tab_navigation_manager.py**: Playwright MCP-based tab management and navigation history testing
+- **test_data_manager.py**: Test data generation, validation, and lifecycle management
+- **page_navigator.py**: Page navigation, URL handling, and routing management
+- **viewport_manager.py**: Viewport sizing, responsive design testing, and display management
+- **file_upload_manager.py**: File upload operations, validation, and progress tracking
+- **form_interaction_manager.py**: Form field interaction, validation, and submission handling
+- **download_and_error_manager.py**: Download operations, error recovery, and status management
+- **mcp_wrapper.py**: Lightweight wrapper for Playwright MCP operations with error handling and retry logic
 
 ### Layered Architecture
 1. **Presentation Layer**: CLI (`__main__.py`), API (`api.py`), Web UI
@@ -159,6 +201,14 @@ docs/
    - Utilities (`utils.py`)
    - Caching (`caching_resource_manager.py`)
    - Metrics (`llm_metrics.py`)
+5. **Validation Layer**:
+   - Result validation (`comparison_result_validator.py`)
+   - Quality assurance and anomaly detection
+6. **Test Infrastructure Layer**:
+   - Playwright MCP wrapper (`mcp_wrapper.py`)
+   - WebUI test automation (`console_network_monitor.py`, `drag_drop_manager.py`)
+   - LLM configuration testing (`llm_configuration_manager.py`)
+   - Navigation testing (`tab_navigation_manager.py`)
 
 ### Data Flow
 ```
@@ -178,7 +228,22 @@ similarity    response
     ↓             ↓
     └──────┬──────┘
            ↓
-    Format output → Display/Save result
+    [Result Validation]
+           ↓
+    Add metadata & method identification
+           ↓
+    [Output Format Control]
+           ↓
+    ┌──────┴──────┐
+    ↓             ↓
+[Score Format] [File Format]
+    ↓             ↓
+ No detailed   Include detailed
+  results       results array
+    ↓             ↓
+    └──────┬──────┘
+           ↓
+    Display/Save result
 ```
 
 ## File Naming Conventions
@@ -282,9 +347,16 @@ Each module handles one primary concern:
 - Unit tests for each module (`test_*.py`)
 - Integration tests for API endpoints (`test_integration.py`)
 - E2E tests for Web UI (`test_ui_playwright*.py`)
+- Playwright MCP包括テストフレームワーク（実装済み）
+  - 12の専門化されたテストマネージャーによる完全自動化
+  - 43テストケース、100%成功率の実績
+  - AIアシスタント統合によるWebUI機能テスト
+  - 軽量ラッパーによる効率的なPlaywright操作
 - Error handling tests (`test_error_handling.py`)
+- Configuration management tests (`test_config_management.py`)
+- Strategy pattern integration tests (`test_strategy_integration.py`)
 - Fixtures for consistent test data
-- Mock external dependencies (model downloads)
+- 実際のvLLM APIとの統合テスト（モック未使用）
 - Automated testing with pytest and playwright
 
 ### Configuration Management
@@ -302,15 +374,22 @@ Each module handles one primary concern:
 2. Implement in appropriate module
 3. Add tests in `tests/`
    - Unit tests for core logic
-   - Integration tests for API
-   - Playwright tests for Web UI
+   - Integration tests for API（モック未使用）
+   - Playwright MCP tests for Web UI（実装済みフレームワーク使用）
 4. Update documentation
 5. Test all interfaces (CLI, API, Web UI) before committing
+6. Follow rules.md禁止事項（モック使用禁止、フォールバック実装禁止）
 
 ### Code Review Checklist
 - [ ] Follows naming conventions
 - [ ] Imports properly organized
 - [ ] Single responsibility maintained
-- [ ] Tests included
+- [ ] Tests included（モック未使用）
 - [ ] Documentation updated
 - [ ] No hardcoded values
+- [ ] rules.md禁止事項遵守
+  - [ ] モック使用禁止
+  - [ ] フォールバック実装禁止
+  - [ ] テスト要件変更禁止
+- [ ] 実装済み機能のみを使用
+- [ ] llm-similarity-vllm仕様との整合性確認

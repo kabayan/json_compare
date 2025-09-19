@@ -1,35 +1,42 @@
-# Technical Design Document
+# 技術設計書
 
 ## Overview
 
-この機能は、JSON Compareツールに vLLM APIを活用したLLMベースの類似度判定をオプション機能として追加します。既存の埋め込みベース手法と併用可能で、より高度な文脈理解に基づいた類似度評価を実現します。
+この機能は、JSON CompareツールにvLLM APIを活用したLLMベースの類似度判定をオプション機能として追加します。既存の埋め込みベース手法と併用可能で、より高度な文脈理解に基づいた類似度評価を実現し、使用した比較手法を明確に識別します。
 
-**Purpose**: 複雑な日本語文脈の理解と、カスタマイズ可能な評価基準による柔軟な類似度判定を提供します。
-**Users**: MLエンジニア、データサイエンティスト、品質保証担当者が、より精密な推論結果の評価に活用します。
-**Impact**: 既存の類似度計算機能を拡張し、`--llm`フラグによる選択的な利用を可能にします。
+**Purpose**: 複雑な日本語文脈の理解と、カスタマイズ可能な評価基準による柔軟な類似度判定を提供し、比較手法の透明性を確保した信頼性の高い評価システムを構築します。
+
+**Users**: MLエンジニア、データサイエンティストが、高度な文脈理解による類似度判定と、使用手法の明確な識別により、より精密で透明性の高い推論結果の評価に活用します。
+
+**Impact**: 既存の類似度計算機能を拡張し、比較方法の明示的識別により結果の透明性と信頼性を向上させます。LLMベースと埋め込みベースの手法を戦略的に切り替え可能なハイブリッド評価システムを実現します。
 
 ### Goals
-- vLLM API (qwen3-14b-awq) を使用したLLMベース類似度判定の実装
-- プロンプトテンプレートの外部ファイル管理機能
+
+- vLLM API (qwen3-14b-awq等) を使用したLLMベース類似度判定の実装
+- 比較方法の明示的識別（`comparison_method`フィールド）とメタデータ強化による透明性確保
+- YAMLベースのプロンプトテンプレート管理システム
 - CLI、Web UI、APIの全インターフェースでの統一的な体験
 - 既存の埋め込みベース機能との完全な互換性維持
+- 設定ファイル管理とパフォーマンス監視機能
 
 ### Non-Goals
+
 - LLMモデルの自前ホスティング（vLLM APIの利用前提）
 - リアルタイム・ストリーミング応答（バッチ処理のみ）
 - 複数LLMの並列利用による投票システム
+- 結果検証と品質保証機能（ユーザー要求により除外）
 
 ## Architecture
 
 ### Existing Architecture Analysis
 
 現在のアーキテクチャは以下のコンポーネントで構成されています：
-- **CLI層**: `__main__.py` による argparse ベースのコマンドライン処理
-- **ビジネスロジック層**: `similarity.py` と `embedding.py` による類似度計算
-- **API層**: `api.py` による FastAPI エンドポイントと Web UI
-- **インフラ層**: `error_handler.py`、`logger.py` による横断的機能
+- **CLI層**: `__main__.py` によるargparseベースのコマンドライン処理
+- **ビジネスロジック層**: `similarity.py`と`embedding.py`による類似度計算
+- **API層**: `api.py`によるFastAPIエンドポイントとWeb UI
+- **インフラ層**: `error_handler.py`、`logger.py`による横断的機能
 
-統合に際しては、既存のパターンを維持し、新機能を Strategy パターンで追加します。
+統合に際しては、既存のパターンを維持し、新機能をStrategyパターンで追加します。結果フォーマッティング層を強化して比較方法の識別を実現します。
 
 ### High-Level Architecture
 
@@ -39,7 +46,7 @@ graph TB
     WebUI[Web UI]
     API[REST API]
 
-    CLI --> SR[SimilarityRouter]
+    CLI --> SR[SimilarityStrategy]
     WebUI --> API
     API --> SR
 
@@ -49,29 +56,41 @@ graph TB
     ES --> EM[EmbeddingModel]
     LS --> LC[LLMClient]
     LS --> PT[PromptTemplate]
+    LS --> SP[ScoreParser]
 
     LC --> VLLM[vLLM API Server]
-    PT --> PF[Prompt Files]
+    PT --> PF[Prompt Files YAML]
+
+    SR --> ERF[EnhancedResultFormatter]
+    ERF --> |comparison_method, metadata| OUT[Output]
+
+    CM[ConfigManager] --> LS
+    CM --> LC
+    LM[LLMMetrics] --> LC
+    CR[CachingResourceManager] --> LC
 ```
 
 **Architecture Integration**:
-- 既存パターン維持: Strategy パターンによる類似度計算の切り替え
-- 新コンポーネント理由: LLMベース判定のカプセル化と設定管理の分離
-- 技術スタック整合: 既存の httpx 依存を活用、YAML設定は既存パターン踏襲
+- 既存パターン維持: Strategyパターンによる類似度計算の切り替え
+- 新コンポーネント理由: LLMベース判定のカプセル化とメタデータ管理の強化
+- 技術スタック整合: 既存のhttpx依存を活用、YAML設定は新規追加
+- 結果フォーマッティング層強化: 比較方法識別とメタデータ付与
 
-### Technology Stack and Design Decisions
+### Technology Alignment
 
-**Technology Alignment**:
+**Existing Technology Stack Integration**:
 - HTTPクライアント: httpx (既存依存を活用)
-- 設定管理: YAML (PyYAML - 新規追加)
+- 設定管理: PyYAML 6.0+ (新規追加)
 - 非同期処理: asyncio (既存のFastAPI基盤を活用)
+- ログ管理: 既存のlogger.pyシステムを拡張
+- エラーハンドリング: 既存のerror_handler.pyパターンを踏襲
 
 **Key Design Decisions**:
 
 1. **Decision**: Strategyパターンによる類似度計算の切り替え
    - **Context**: 既存の埋め込みベース機能と新規LLM機能の共存が必要
    - **Alternatives**: 継承階層、条件分岐、プラグインシステム
-   - **Selected Approach**: SimilarityRouterクラスによる動的戦略選択
+   - **Selected Approach**: SimilarityStrategyクラスによる動的戦略選択
    - **Rationale**: 既存コードへの影響最小化と将来の拡張性確保
    - **Trade-offs**: わずかな複雑性増加 vs 高い保守性と拡張性
 
@@ -82,6 +101,13 @@ graph TB
    - **Rationale**: 可読性とバージョン管理の容易さ、既存のYAML利用パターンとの整合
    - **Trade-offs**: ファイルI/O vs 柔軟な設定変更
 
+3. **Decision**: 設定管理の階層化（環境変数 > CLI > 設定ファイル）
+   - **Context**: 複数環境での柔軟な設定管理が必要
+   - **Alternatives**: 単一設定ファイル、環境変数のみ
+   - **Selected Approach**: 優先順位付き設定層の実装
+   - **Rationale**: 環境固有の設定とユーザ設定の両立
+   - **Trade-offs**: 設定の複雑性 vs 運用の柔軟性
+
 ## System Flows
 
 ### LLMベース類似度判定フロー
@@ -89,46 +115,75 @@ graph TB
 ```mermaid
 sequenceDiagram
     participant U as User/System
-    participant SR as SimilarityRouter
+    participant SR as SimilarityStrategy
+    participant CM as ConfigManager
     participant LS as LLMSimilarity
     participant PT as PromptTemplate
     participant LC as LLMClient
     participant VLLM as vLLM API
+    participant SP as ScoreParser
+    participant ERF as EnhancedResultFormatter
 
     U->>SR: calculate(text1, text2, use_llm=True)
-    SR->>LS: calculate_similarity(text1, text2)
-    LS->>PT: load_template()
+    SR->>CM: load_llm_config()
+    CM-->>SR: llm_config
+    SR->>LS: calculate_similarity(text1, text2, config)
+
+    LS->>PT: load_template(template_path)
     PT-->>LS: template
     LS->>PT: render(text1, text2)
     PT-->>LS: prompt
-    LS->>LC: chat_completion(prompt)
+
+    LS->>LC: chat_completion(prompt, model, params)
     LC->>VLLM: POST /v1/chat/completions
     VLLM-->>LC: response
     LC-->>LS: llm_output
-    LS->>LS: parse_score(llm_output)
-    LS-->>SR: similarity_score
-    SR-->>U: result
+
+    LS->>SP: parse_score(llm_output)
+    SP-->>LS: score, category
+    LS-->>SR: raw_similarity_result
+
+    Note over SR,ERF: メタデータ付与フェーズ
+    SR->>ERF: format_with_metadata(raw_result, "llm", config)
+    ERF->>ERF: add_comparison_method_metadata()
+    ERF->>ERF: add_llm_metadata()
+    ERF-->>SR: enhanced_result
+
+    SR-->>U: final_result_with_metadata
 ```
 
-### エラーハンドリングとフォールバック
+### 設定管理フロー
 
 ```mermaid
-graph TD
-    A[LLM判定開始] --> B{vLLM API接続}
-    B -->|成功| C[プロンプト生成]
-    B -->|失敗| D[接続エラーログ]
-    D --> E{リトライ可能?}
-    E -->|Yes| F[指数バックオフ]
-    F --> B
-    E -->|No| G[フォールバック提案]
-    G --> H{ユーザー選択}
-    H -->|埋め込み| I[埋め込みモード実行]
-    H -->|中断| J[エラー終了]
-    C --> K[LLM推論]
-    K -->|成功| L[スコア解析]
-    K -->|タイムアウト| M[タイムアウト処理]
-    M --> G
+graph TB
+    ENV[環境変数] --> CM[ConfigManager]
+    CLI[CLI引数] --> CM
+    FILE[設定ファイル] --> CM
+
+    CM --> VALIDATE[設定検証]
+    VALIDATE --> |有効| CONFIG[統合設定]
+    VALIDATE --> |無効| ERROR[設定エラー]
+
+    CONFIG --> LS[LLMSimilarity]
+    CONFIG --> LC[LLMClient]
+    CONFIG --> PT[PromptTemplate]
 ```
+
+## Requirements Traceability
+
+| Requirement | 実装コンポーネント | インターフェース | フロー参照 |
+|-------------|------------------|----------------|-----------|
+| Req 1.1-1.5 | LLMSimilarity, LLMClient | calculate_similarity(), chat_completion() | LLMベース判定フロー |
+| Req 2.1-2.5 | PromptTemplate | load_template(), render() | LLMベース判定フロー |
+| Req 3.1-3.5 | ConfigManager, CLI拡張 | load_config(), parse_args() | 設定管理フロー |
+| Req 4.1-4.5 | ScoreParser | parse_score(), categorize_score() | LLMベース判定フロー |
+| Req 5.1-5.5 | API拡張, WebUI拡張 | /api/compare拡張, UI要素 | インターフェース統合 |
+| Req 6.1-6.5 | LLMMetrics, ErrorHandler | メトリクス記録, リトライ処理 | エラーハンドリングフロー |
+| Req 7.1-7.5 | ConfigManager | ファイル管理, バリデーション | 設定管理フロー |
+| Req 8.1 | EnhancedResultFormatter | add_comparison_method() | LLMベース判定フロー |
+| Req 8.3 | EnhancedResultFormatter | add_llm_metadata() | LLMベース判定フロー |
+| Req 8.4 | EnhancedResultFormatter | add_embedding_metadata() | LLMベース判定フロー |
+| Req 8.5 | ScoreParser | validate_score_range() | LLMベース判定フロー |
 
 ## Components and Interfaces
 
@@ -139,13 +194,13 @@ graph TD
 **Responsibility & Boundaries**
 - **Primary Responsibility**: vLLM APIを使用した類似度スコアの算出
 - **Domain Boundary**: 類似度計算ドメイン内のLLM戦略実装
-- **Data Ownership**: プロンプトテンプレート、LLM応答のキャッシュ
+- **Data Ownership**: プロンプトテンプレート、LLM応答の一時データ
 - **Transaction Boundary**: 単一の類似度計算リクエスト
 
 **Dependencies**
-- **Inbound**: SimilarityRouter、CLI/API層
+- **Inbound**: SimilarityStrategy、CLI/API層
 - **Outbound**: LLMClient、PromptTemplate、ScoreParser
-- **External**: httpx、PyYAML
+- **External**: httpx、PyYAML、CachingResourceManager
 
 **Contract Definition**
 
@@ -155,40 +210,90 @@ interface LLMSimilarityService {
     text1: str,
     text2: str,
     config: LLMConfig
-  ): Result<SimilarityScore, LLMError>;
+  ): Result<RawSimilarityResult, LLMError>;
 
   validate_connection(): Result<bool, ConnectionError>;
-
   set_prompt_template(template_path: str): Result<void, TemplateError>;
+  get_metrics(): LLMMetrics;
 }
 
-interface SimilarityScore {
+interface RawSimilarityResult {
   score: float;  // 0.0 - 1.0
-  category: str; // "完全一致" | "非常に類似" | "類似" | "やや類似" | "低い類似度"
+  category: str;
   raw_response: str;
   confidence: float;
+  processing_time: float;
+  model_name: str;
+  prompt_template: str;
 }
 ```
 
-**Integration Strategy**
-- **Modification Approach**: 既存の EmbeddingModel クラスと並列に新規クラス作成
-- **Backward Compatibility**: 既存インターフェース完全維持、フラグによる切り替え
-- **Migration Path**: 段階的移行のためのA/Bテスト機能提供
+#### PromptTemplate
+
+**Responsibility & Boundaries**
+- **Primary Responsibility**: YAMLプロンプトテンプレートの読み込みと変数置換
+- **Domain Boundary**: プロンプト管理ドメイン
+- **Data Ownership**: テンプレートキャッシュ
+- **Transaction Boundary**: 単一のプロンプト生成処理
+
+**Contract Definition**
+
+```typescript
+interface PromptTemplateService {
+  load_template(file_path: str): Result<PromptTemplate, TemplateError>;
+  render(template: PromptTemplate, text1: str, text2: str): Result<str, RenderError>;
+  validate_template(template: PromptTemplate): Result<bool, ValidationError>;
+  get_default_template(): PromptTemplate;
+}
+
+interface PromptTemplate {
+  system_prompt: str;
+  user_prompt_template: str;
+  temperature: float;
+  max_tokens: int;
+  variables: Dict<str, str>;
+}
+```
+
+#### ScoreParser
+
+**Responsibility & Boundaries**
+- **Primary Responsibility**: LLM応答からの数値スコア抽出と分類
+- **Domain Boundary**: スコア解析ドメイン
+- **Data Ownership**: 解析ルールとカテゴリマッピング
+- **Transaction Boundary**: 単一の応答解析処理
+
+**Contract Definition**
+
+```typescript
+interface ScoreParserService {
+  parse_score(llm_response: str): Result<ScoreResult, ParseError>;
+  categorize_score(score: float): str;
+  extract_numeric_score(text: str): Result<float, ExtractionError>;
+  estimate_score_from_text(text: str): float;
+  validate_score_range(score: float): float;  // Req 8.5
+}
+
+interface ScoreResult {
+  score: float;
+  category: str;
+  confidence: float;
+  extraction_method: str;
+}
+```
 
 ### 外部通信層
 
 #### LLMClient
 
 **Responsibility & Boundaries**
-- **Primary Responsibility**: vLLM API との HTTP 通信管理
-- **Domain Boundary**: 外部システム統合層
-- **Data Ownership**: API認証情報、リトライ状態
+- **Primary Responsibility**: vLLM APIとの通信とレスポンス管理
+- **Domain Boundary**: 外部API通信ドメイン
+- **Data Ownership**: API接続状態、レスポンスキャッシュ
 - **Transaction Boundary**: 単一のAPI呼び出し
 
 **Dependencies**
-- **Inbound**: LLMSimilarity
-- **Outbound**: なし
-- **External**: httpx、vLLM API (http://192.168.1.18:8000)
+- **External**: vLLM API Server (http://192.168.1.18:8000)
 
 **Contract Definition**
 
@@ -202,49 +307,108 @@ interface LLMClientService {
   ): Result<ChatResponse, APIError>;
 
   async health_check(): Result<bool, ConnectionError>;
+  get_response_time_metrics(): ResponseTimeMetrics;
+  set_timeout(seconds: int): void;
 }
 
 interface ChatResponse {
-  id: str;
-  choices: Choice[];
+  content: str;
+  model: str;
   usage: TokenUsage;
-  created: int;
+  response_time: float;
 }
 ```
 
 **State Management**
 - **State Model**: 接続状態（未接続、接続中、接続済み、エラー）
-- **Concurrency**: 接続プールによる並行リクエスト制御（最大5接続）
+- **Concurrency**: 順次処理による レート制限回避（Requirement 6.5）
 
 ### 設定管理層
 
-#### PromptTemplate
+#### ConfigManager
 
 **Responsibility & Boundaries**
-- **Primary Responsibility**: プロンプトテンプレートの読み込みと変数置換
+- **Primary Responsibility**: LLM関連設定の一元管理とバリデーション
 - **Domain Boundary**: 設定管理ドメイン
-- **Data Ownership**: テンプレートファイルのキャッシュ
-- **Transaction Boundary**: テンプレート読み込み単位
+- **Data Ownership**: 設定ファイル、統合設定
+- **Transaction Boundary**: 設定読み込み・保存処理
 
 **Contract Definition**
 
 ```typescript
-interface PromptTemplateService {
-  load_template(file_path: str): Result<Template, IOError>;
-
-  render(
-    template: Template,
-    variables: Dict[str, str]
-  ): Result<str, RenderError>;
-
-  validate_template(template: Template): Result<bool, ValidationError>;
+interface ConfigManagerService {
+  load_config(): Result<LLMConfig, ConfigError>;
+  save_config(config: LLMConfig): Result<void, SaveError>;
+  validate_config(config: LLMConfig): Result<bool, ValidationError>;
+  merge_configs(env: EnvConfig, cli: CLIConfig, file: FileConfig): LLMConfig;
 }
 
-interface Template {
-  system_prompt: str;
-  user_prompt: str;
-  variables: List[str];  // ["text1", "text2"]
-  output_format: str;
+interface LLMConfig {
+  api_url: str;
+  api_key?: str;
+  model_name: str;
+  temperature: float;
+  max_tokens: int;
+  timeout: int;
+  prompt_template_path: str;
+  cache_enabled: bool;
+}
+```
+
+### 結果フォーマッティング層
+
+#### EnhancedResultFormatter
+
+**Responsibility & Boundaries**
+- **Primary Responsibility**: 比較方法識別とメタデータ付与
+- **Domain Boundary**: 結果フォーマッティングドメイン
+- **Data Ownership**: メタデータテンプレート
+- **Transaction Boundary**: 単一の結果フォーマット処理
+
+**Integration Strategy**
+- **Modification Approach**: 既存の出力形式を拡張（破壊的変更なし）
+- **Backward Compatibility**: 既存フィールドは維持、新規フィールドを追加
+- **Migration Path**: 段階的な移行（comparison_methodフィールドの追加）
+
+**Contract Definition**
+
+```typescript
+interface EnhancedResultFormatterService {
+  format_with_metadata(
+    raw_result: RawSimilarityResult,
+    method: ComparisonMethod,
+    config: MethodConfig
+  ): Result<EnhancedSimilarityResult, FormatError>;
+
+  add_comparison_method_metadata(
+    result: SimilarityResult,
+    method: ComparisonMethod
+  ): EnhancedSimilarityResult;
+
+  add_llm_metadata(result: SimilarityResult, llm_data: LLMData): void;
+  add_embedding_metadata(result: SimilarityResult, embedding_data: EmbeddingData): void;
+}
+
+interface EnhancedSimilarityResult {
+  // 基本フィールド
+  score: float;
+  meaning: str;
+  comparison_method: "embedding" | "llm";  // 必須フィールド (Req 8.1)
+
+  // 共通メタデータ
+  processing_time: float;
+  timestamp: str;
+
+  // LLM固有メタデータ (Req 8.3)
+  llm_model_name?: str;
+  prompt_template?: str;
+  llm_response_time?: float;
+  llm_raw_response?: str;
+
+  // 埋め込み固有メタデータ (Req 8.4)
+  embedding_model_name?: str;
+  similarity_algorithm?: str;
+  embedding_dimension?: int;
 }
 ```
 
@@ -261,118 +425,103 @@ interface Template {
 | --model | str | qwen3-14b-awq | 使用するLLMモデル |
 | --temperature | float | 0.2 | 生成温度パラメータ |
 | --max-tokens | int | 64 | 最大生成トークン数 |
-
-#### Web UI拡張
-
-**API Contract**
-
-| Method | Endpoint | Request | Response |
-|--------|----------|---------|----------|
-| POST | /api/compare | CompareRequestWithLLM | SimilarityResponse |
-| GET | /api/prompts | - | PromptList |
-| POST | /api/prompts/upload | PromptFile | PromptUploadResponse |
-
-```typescript
-interface CompareRequestWithLLM extends CompareRequest {
-  use_llm: boolean;
-  prompt_file?: str;
-  llm_config?: LLMConfig;
-}
-```
+| --save-config | flag | False | 現在の設定を保存 |
 
 ## Data Models
 
 ### Domain Model
 
 **Core Concepts**:
-- **SimilarityMethod**: 類似度計算方式（Embedding | LLM）
-- **LLMConfig**: LLM関連の設定集約
-- **PromptVariable**: テンプレート内の置換可能変数
+- **ComparisonMethod**: 類似度計算方式（Embedding | LLM）
+- **MetadataTemplate**: 手法別メタデータテンプレート
+- **ResultFormatter**: 結果フォーマッティング戦略
+- **ConfigurationHierarchy**: 設定の優先順位管理
 
-### Logical Data Model
-
-```yaml
-# プロンプトテンプレート構造
-prompt_template:
-  version: "1.0"
-  metadata:
-    author: string
-    description: string
-    created_at: datetime
-
-  prompts:
-    system: string
-    user: |
-      以下の2つのテキストの類似度を評価してください。
-
-      テキスト1: {text1}
-      テキスト2: {text2}
-
-      類似度を以下の形式で回答してください：
-      - スコア: 0.0-1.0の数値
-      - カテゴリ: 完全一致/非常に類似/類似/やや類似/低い類似度
-      - 理由: 判定の根拠
-
-  parameters:
-    temperature: 0.2
-    max_tokens: 64
-    chat_template_kwargs:
-      enable_thinking: false
-```
+### Enhanced Logical Data Model
 
 ```yaml
-# LLM設定ファイル構造
+# 拡張された結果データ構造
+enhanced_similarity_result:
+  # 必須フィールド（Requirement 8.1）
+  comparison_method: "embedding" | "llm"
+  score: float  # 0.0-1.0
+  meaning: string
+
+  # 共通メタデータ
+  processing_time: float
+  timestamp: datetime
+
+  # LLM固有メタデータ（Requirement 8.3）
+  llm_metadata:
+    model_name: string
+    prompt_template: string
+    response_time: float
+    raw_response: string
+    token_usage: integer
+
+  # 埋め込み固有メタデータ（Requirement 8.4）
+  embedding_metadata:
+    model_name: string
+    similarity_algorithm: string
+    embedding_dimension: integer
+    computation_time: float
+
+# 設定データ構造
 llm_config:
   api:
-    url: "http://192.168.1.18:8000/v1/chat/completions"
-    auth_token: "EMPTY"
-    timeout: 30
-
+    url: string
+    key: string
+    timeout: integer
   model:
-    name: "qwen3-14b-awq"
-    temperature: 0.2
-    max_tokens: 64
-
-  retry:
-    max_attempts: 3
-    backoff_factor: 2
-    max_delay: 10
-
-  fallback:
-    auto_fallback: true
-    prompt_user: true
+    name: string
+    temperature: float
+    max_tokens: integer
+  prompt:
+    template_path: string
+    variables: dict
+  cache:
+    enabled: boolean
+    size: integer
 ```
 
 ### Data Contracts & Integration
 
-**API Data Transfer**:
+**Enhanced API Data Transfer**:
 
 ```typescript
-// vLLM API Request
-interface VLLMRequest {
-  model: string;
-  messages: Array<{
-    role: "system" | "user" | "assistant";
-    content: string;
-  }>;
-  temperature: number;
-  max_tokens: number;
-  chat_template_kwargs?: {
-    enable_thinking: boolean;
+// 拡張されたAPIレスポンス（Requirement 8.1, 8.3-8.4）
+interface EnhancedComparisonResponse {
+  // 従来フィールド
+  score: number;
+  meaning: string;
+  total_lines: number;
+
+  // 必須追加フィールド
+  comparison_method: "embedding" | "llm";
+
+  // 拡張メタデータ
+  metadata: {
+    processing_time: number;
+
+    // 手法固有メタデータ
+    llm_metadata?: LLMMetadata;
+    embedding_metadata?: EmbeddingMetadata;
   };
 }
 
-// Internal Processing
-interface SimilarityResult {
-  score: number;
-  meaning: string;
-  method: "embedding" | "llm";
-  processing_time: number;
-  metadata: {
-    model_used?: string;
-    prompt_file?: string;
-    llm_raw_response?: string;
-  };
+interface LLMMetadata {
+  model_name: string;
+  prompt_template: string;
+  response_time: number;
+  raw_response: string;
+  token_usage: number;
+}
+
+interface EmbeddingMetadata {
+  model_name: string;
+  similarity_algorithm: string;
+  embedding_dimension: number;
+  computation_time: number;
 }
 ```
 
@@ -385,49 +534,56 @@ interface SimilarityResult {
 ### Error Categories and Responses
 
 **接続エラー (ConnectionError)**
-- vLLM API接続失敗 → 3回リトライ後、埋め込みモードへのフォールバック提案
-- タイムアウト → プログレスバー表示、30秒後に中断オプション提供
+- vLLM API接続失敗 → 3回リトライ後、埋め込みモードへのフォールバック提案 (Req 1.4)
+- タイムアウト → プログレスバー表示、30秒後に中断オプション提供 (Req 1.5)
 
 **設定エラー (ConfigurationError)**
-- プロンプトファイル不在 → デフォルトプロンプト使用提案と作成例表示
-- YAMLパースエラー → エラー行番号と修正例を表示
+- プロンプトファイル不在 → デフォルトプロンプト使用提案と作成例表示 (Req 2.3)
+- YAML パースエラー → エラー行番号と修正例を表示 (Req 2.4)
+- 設定値バリデーション失敗 → 詳細なエラーメッセージと正しい形式表示 (Req 7.3)
 
 **処理エラー (ProcessingError)**
-- LLM応答解析失敗 → 該当行スキップ、エラーログ記録
-- スコア抽出失敗 → カテゴリベースの推定値使用
+- LLM応答解析失敗 → 該当行スキップ、明示的な失敗マーカー（"PARSE_FAILED"）出力 (Req 4.4)
+- スコア抽出失敗 → カテゴリベースの推定値使用 (Req 4.2)
+- スコア範囲外 → 自動クランプと警告ログ出力 (Req 8.5)
+
+**レート制限エラー (RateLimitError)**
+- レート制限検出 → 指数バックオフでリトライ (Req 6.4)
+- 連続失敗 → 埋め込みモードへフォールバック (Req 6.3)
 
 ### Monitoring
 
-- APIコール応答時間のメトリクスログ記録
+- APIコール応答時間のメトリクスログ記録 (Req 6.1)
 - エラー発生率とフォールバック使用率の追跡
 - LLMモデル別の成功率統計
+- 設定変更ログの記録
 
 ## Testing Strategy
 
 ### Unit Tests
-- LLMClient: モックvLLM APIレスポンスによる通信テスト
-- PromptTemplate: テンプレート読み込みと変数置換テスト
-- ScoreParser: 各種LLM出力形式の解析テスト
-- LLMConfig: 設定ファイル読み込みとバリデーションテスト
+- LLMClient: vLLM API通信とエラーハンドリング
+- PromptTemplate: テンプレート読み込みと変数置換
+- ScoreParser: 各種LLM出力形式の解析と分類
+- ConfigManager: 設定階層管理とバリデーション
+- EnhancedResultFormatter: メタデータ付与と比較方法識別
 
 ### Integration Tests
 - CLI統合: `--llm`フラグ付き実行フロー全体
-- API統合: `/api/compare` エンドポイントでのLLMモード
+- API統合: `/api/compare`エンドポイントでのLLMモード
 - フォールバック: API失敗時の埋め込みモード切り替え
-- プロンプト管理: カスタムプロンプトファイルの適用
+- 設定管理: 環境変数、CLI、ファイルの優先順位テスト
 
 ### E2E/Web UI Tests (Playwright MCP使用)
-- **テストツール**: Playwright MCP を使用した自動化テスト
 - LLMモードチェックボックス: 選択状態の切り替えと表示確認
 - ファイルアップロード: LLMモードでの処理完了確認
 - プロンプトファイル選択: カスタムプロンプトのアップロードと適用
-- エラーシナリオ: 接続失敗時のエラーメッセージとフォールバック提案の表示確認
-- 結果表示: LLM判定結果とメタデータ（使用モデル、プロンプト等）の表示確認
+- メタデータ表示: 比較方法識別フィールドとメタデータの表示確認
+- 設定保存: `--save-config`オプションの動作確認
 
 ## Security Considerations
 
 ### API認証とアクセス制御
-- vLLM APIトークンの環境変数管理
+- vLLM APIトークンの環境変数管理 (Req 3.5)
 - APIキーのログ出力禁止
 - HTTPSによる通信暗号化（本番環境）
 
@@ -435,8 +591,28 @@ interface SimilarityResult {
 - プロンプトインジェクション対策
 - ファイルパスのトラバーサル攻撃防止
 - YAML読み込み時の安全なローダー使用
+- 設定値の範囲チェックとサニタイゼーション
 
 ### データ保護
 - LLM応答の一時的なメモリ保持のみ
 - センシティブ情報のマスキング機能
 - 処理ログでのPII除外
+- 設定ファイルの適切な権限管理
+
+## Performance & Scalability
+
+### Target Metrics
+- LLM API応答時間: 5秒以内（90%tile） (Req 6.2)
+- メタデータ付与処理時間: 10ms以内
+- 設定読み込み時間: 100ms以内
+
+### Scaling Approaches
+- LLM APIコールの順次処理によるレート制限回避 (Req 6.5)
+- メタデータ処理の並列実行
+- 設定キャッシュによる高速化
+
+### Caching Strategies
+- LLM応答キャッシュ（既存機能の活用）
+- プロンプトテンプレートキャッシュ
+- 設定ファイルキャッシュ
+- 接続プールによるAPI効率化

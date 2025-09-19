@@ -62,10 +62,19 @@ npx cc-sdd@latest --lang ja
 - /kiro:spec-init 追加機能
 3. requirements.md の作成 (/kiro:spec-requirements)
     - .kiro/xx/requirement.md を確認
-4. design.md の作成 (/kiro:spec-design)
-5. tasks.md の作成 (/kiro:spec-tasks)
-6. タスク番号を指定して実行 (/kiro:spec-impl)
-- /kiro:spec-impl <specname> タスク1から順番に進めて
+    /kiro:steering llm-similarity-vllm
+
+4. design.md の作成 
+/kiro:spec-design llm-similarity-vllm
+/kiro:steering llm-similarity-vllm
+
+5. tasks.md の作成 
+/kiro:spec-tasks llm-similarity-vllm
+/kiro:steering llm-similarity-vllm
+
+6. タスク番号を指定して実行 
+/kiro:spec-impl llm-similarity-vllm タスク1から順番に進めて
+
 7. /kiro:spec-status 進捗を確認
 
 # 初期
