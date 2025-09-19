@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union, Dict, Any, List
+import numpy as np
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import JSONResponse, HTMLResponse, Response
@@ -47,6 +48,24 @@ app = FastAPI(
     description="JSON形式のデータを意味的類似度で比較するAPI",
     version="1.0.0"
 )
+
+
+def convert_numpy_types(obj):
+    """numpy型をPython標準型に再帰的に変換"""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_numpy_types(item) for item in obj)
+    else:
+        return obj
 
 
 # バリデーション関数
@@ -490,7 +509,8 @@ async def upload_file(
                     result["_metadata"] = {
                         "processing_time": f"{processing_time:.2f}秒",
                         "original_filename": file.filename,
-                        "gpu_used": gpu
+                        "gpu_used": gpu,
+                        "calculation_method": "embedding"  # 埋め込みベースの計算方法を明示
                     }
                     if error_messages:
                         result["_metadata"]["data_repairs"] = len(error_messages)
@@ -920,12 +940,16 @@ async def compare_dual_files(
         processing_time = time.time() - start_time
 
         # メタデータを更新
-        if isinstance(result, dict) and '_metadata' in result:
+        if isinstance(result, dict):
+            if '_metadata' not in result:
+                result['_metadata'] = {}
             result["_metadata"]["processing_time"] = f"{processing_time:.2f}秒"
             result["_metadata"]["original_files"] = {
                 "file1": file1.filename,
                 "file2": file2.filename
             }
+            result["_metadata"]["calculation_method"] = "embedding"  # 埋め込みベースの計算方法を明示
+            result["_metadata"]["gpu_used"] = gpu
             if errors1 or errors2:
                 result["_metadata"]["data_repairs"] = {
                     "file1": len(errors1),
@@ -1717,7 +1741,11 @@ async def ui_form():
             resultContainer.classList.remove('active');
 
             try {
-                const response = await fetch('/api/compare/single', {
+                // LLMチェックボックスの状態に応じてエンドポイントを選択
+                const useLLM = document.getElementById('use_llm').checked;
+                const endpoint = useLLM ? '/api/compare/llm' : '/api/compare/single';
+
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     body: formData
                 });
@@ -1799,7 +1827,11 @@ async def ui_form():
             resultContainer.classList.remove('active');
 
             try {
-                const response = await fetch('/api/compare/dual', {
+                // LLMチェックボックスの状態に応じてエンドポイントを選択
+                const useLLM = document.getElementById('use_llm2').checked;
+                const endpoint = useLLM ? '/api/compare/dual/llm' : '/api/compare/dual';
+
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     body: formData
                 });
@@ -2195,55 +2227,112 @@ async def get_metrics():
 
 # LLM機能統合API
 @app.post("/api/compare/llm")
-async def compare_with_llm(request: CompareRequestWithLLM):
-    """LLM付き比較API"""
-    try:
-        # LLM設定の検証
-        if request.use_llm and request.llm_config:
-            validate_llm_config(request.llm_config.model_dump())
+async def compare_with_llm(
+    file: UploadFile = File(...),
+    type: str = Form("score"),
+    gpu: str = Form("false"),
+    use_llm: str = Form("false"),
+    model: str = Form("qwen3-14b-awq"),
+    temperature: float = Form(0.2),
+    max_tokens: int = Form(64)
+):
+    """LLM付き比較API（FormData対応）"""
+    start_time = time.time()
+    processing_time = 0
+    temp_file_created = False
+    temp_filepath = ""
+    error_id = None
+    client_ip = "127.0.0.1"  # Web UI経由の場合
 
-        # 一時ファイルに内容を書き込み
+    try:
+        # ファイル検証
+        if not file.filename.endswith('.jsonl'):
+            raise HTTPException(status_code=400, detail="JSONLファイルのみサポートされています")
+
+        # ファイル内容読み込み
+        file_content = await file.read()
+        file_content = file_content.decode('utf-8')
+
+        # 一時ファイル作成
         with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
-            f.write(request.file_content)
-            temp_file_path = f.name
+            f.write(file_content)
+            temp_filepath = f.name
+            temp_file_created = True
+
+        # LLM設定の準備
+        use_llm_bool = use_llm.lower() == "true"
+        gpu_bool = gpu.lower() == "true"
 
         try:
-            if request.use_llm:
+            if use_llm_bool:
                 try:
                     # LLMベース処理
-                    config = request.llm_config.model_dump() if request.llm_config else {}
-                    config["type"] = request.type
-                    result = await process_jsonl_file_with_llm(temp_file_path, config)
+                    config = {
+                        "model": model,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "type": type
+                    }
+                    result = await process_jsonl_file_with_llm(temp_filepath, config)
+
+                    # メタデータにcalculation_methodを追加
+                    if isinstance(result, dict):
+                        if "_metadata" not in result:
+                            result["_metadata"] = {}
+                        result["_metadata"]["calculation_method"] = "llm"
+                        result["_metadata"]["original_filename"] = file.filename
+                        result["_metadata"]["gpu_used"] = gpu_bool
+
                 except Exception as llm_error:
-                    if request.fallback_enabled:
-                        # フォールバックとして埋め込みベース処理を実行
-                        logger.log_error(
-                            str(uuid.uuid4()),
-                            "llm_fallback",
-                            f"LLM処理失敗によりフォールバック実行: {str(llm_error)}",
-                            context={"fallback_enabled": True}
-                        )
-                        result = process_jsonl_file(temp_file_path, request.type)
-                        # 結果にフォールバックメタデータを追加
-                        if "detailed_results" in result:
-                            for item in result["detailed_results"]:
-                                item["method"] = "embedding_fallback"
-                    else:
-                        raise llm_error
+                    # フォールバックとして埋め込みベース処理を実行
+                    print(f"LLM計算に失敗、埋め込みモードにフォールバック: {llm_error}")
+                    result = process_jsonl_file(temp_filepath, type, gpu_bool)
+
+                    # 結果にフォールバックメタデータを追加
+                    if isinstance(result, dict):
+                        if "_metadata" not in result:
+                            result["_metadata"] = {}
+                        result["_metadata"]["calculation_method"] = "embedding"
+                        result["_metadata"]["fallback_reason"] = f"LLM処理失敗: {str(llm_error)}"
+                        result["_metadata"]["original_filename"] = file.filename
+                        result["_metadata"]["gpu_used"] = gpu_bool
             else:
                 # 通常の埋め込みベース処理
-                result = process_jsonl_file(temp_file_path, request.type)
+                result = process_jsonl_file(temp_filepath, type, gpu_bool)
+                # メタデータを追加
+                if isinstance(result, dict):
+                    if "_metadata" not in result:
+                        result["_metadata"] = {}
+                    result["_metadata"]["calculation_method"] = "embedding"
+                    result["_metadata"]["original_filename"] = file.filename
+                    result["_metadata"]["gpu_used"] = gpu_bool
+
+            processing_time = time.time() - start_time
+
+            # 処理時間をメタデータに追加
+            if isinstance(result, dict) and "_metadata" in result:
+                result["_metadata"]["processing_time"] = f"{processing_time:.2f}秒"
+
+            # numpy型をPython標準型に変換してJSONシリアライゼーションエラーを防ぐ
+            result = convert_numpy_types(result)
 
             return result
 
         finally:
             # 一時ファイルのクリーンアップ
-            os.unlink(temp_file_path)
+            if temp_file_created and os.path.exists(temp_filepath):
+                try:
+                    os.unlink(temp_filepath)
+                except Exception as cleanup_error:
+                    print(f"一時ファイル削除エラー: {cleanup_error}")
 
+    except HTTPException:
+        raise
     except Exception as e:
+        processing_time = time.time() - start_time
         error_id = str(uuid.uuid4())
-        logger.log_error(error_id, "llm_api_error", str(e), context={"request_type": "compare_llm"})
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"LLM API エラー: {e}")
+        raise HTTPException(status_code=500, detail=f"処理中にエラーが発生しました: {str(e)}")
 
 
 @app.post("/api/compare/dual/llm")

@@ -49,6 +49,12 @@ datas/merged.jsonl
 datas/*.tmp
 datas/*.bak
 
+# Temporary prompt files (UUID-named)
+prompts/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*.yaml
+
+# Temporary test files
+test_vllm_connection.py
+
 # OS
 .DS_Store
 Thumbs.db

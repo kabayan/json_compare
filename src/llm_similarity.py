@@ -184,8 +184,8 @@ class LLMSimilarity:
         """LLMレスポンスを解析してSimilarityResultに変換"""
         content = response.content
 
-        # スコア抽出
-        score_match = re.search(r'スコア[：:]\s*([0-9.]+)', content)
+        # スコア抽出（マークダウンボールド形式にも対応）
+        score_match = re.search(r'\*\*スコア\*\*[：:]\s*([-]?[0-9.０-９．]+)', content)
         if not score_match:
             raise LLMSimilarityError(f"レスポンス解析に失敗: スコアが見つかりません - {content}")
 
@@ -196,12 +196,12 @@ class LLMSimilarity:
         except ValueError:
             raise LLMSimilarityError(f"スコアの解析に失敗: {score_match.group(1)}")
 
-        # カテゴリ抽出
-        category_match = re.search(r'カテゴリ[：:]\s*([^\n]+)', content)
+        # カテゴリ抽出（マークダウンボールド形式にも対応）
+        category_match = re.search(r'\*\*カテゴリ\*\*[：:]\s*([^\n]+)', content)
         category = category_match.group(1).strip() if category_match else ""
 
-        # 理由抽出
-        reason_match = re.search(r'理由[：:]\s*([^\n]+(?:\n[^\n*]+)*)', content)
+        # 理由抽出（マークダウンボールド形式にも対応）
+        reason_match = re.search(r'\*\*理由\*\*[：:]\s*(.+?)(?=\n\S|$)', content, re.MULTILINE | re.DOTALL)
         reason = reason_match.group(1).strip() if reason_match else ""
 
         return SimilarityResult(

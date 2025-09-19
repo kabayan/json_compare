@@ -284,7 +284,7 @@ class SimilarityCalculator:
 
                 return result
 
-            except StrategyError as e:
+            except Exception as e:
                 # フォールバック処理
                 if fallback_enabled and chosen_method == "llm":
                     logger.warning(f"LLM計算に失敗、埋め込みモードにフォールバック: {e}")
@@ -306,10 +306,15 @@ class SimilarityCalculator:
 
                 else:
                     self._stats["failed_calculations"] += 1
-                    raise
+                    if isinstance(e, (StrategyError, LLMSimilarityError)):
+                        raise
+                    else:
+                        raise StrategyError(f"LLM計算に失敗しました: {e}")
 
         except Exception as e:
-            self._stats["failed_calculations"] += 1
+            # 内側のexceptで既にfailed_calculationsが更新されている場合はスキップ
+            if not isinstance(e, (StrategyError, LLMSimilarityError)):
+                self._stats["failed_calculations"] += 1
             logger.error(f"類似度計算に失敗: {e}")
             if isinstance(e, StrategyError):
                 raise

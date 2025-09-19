@@ -87,9 +87,9 @@ class ScoreParser:
 
         # デフォルトパターン
         default_patterns = {
-            "score_pattern": r"スコア[：:]\s*([-]?[0-9.０-９．]+)",
-            "category_pattern": r"カテゴリ[：:]\s*([^\n]+)",
-            "reason_pattern": r"理由[：:]\s*(.+?)(?=\n\S|$)",
+            "score_pattern": r"\*\*スコア\*\*[：:]\s*([-]?[0-9.０-９．]+)",
+            "category_pattern": r"\*\*カテゴリ\*\*[：:]\s*([^\n]+)",
+            "reason_pattern": r"\*\*理由\*\*[：:]\s*(.+?)(?=\n\S|$)",
             "percentage_pattern": r"([-]?[0-9.０-９．]+)%",
             "number_pattern": r"([-]?[0-9.０-９．]+)"
         }
@@ -122,9 +122,14 @@ class ScoreParser:
         score_match = self.patterns["score_pattern"].search(normalized_text)
         if score_match:
             try:
-                score = float(score_match.group(1))
-                # 範囲外の値は適切にクランプ
-                return max(0.0, min(1.0, score))
+                original_score = float(score_match.group(1))
+                # Requirement 8.5: 範囲外の値に警告を出してクランプ
+                if original_score < 0.0 or original_score > 1.0:
+                    logger.warning(
+                        f"スコア値が期待範囲外です: {original_score} -> "
+                        f"{max(0.0, min(1.0, original_score))}にクランプしました"
+                    )
+                return max(0.0, min(1.0, original_score))
             except ValueError:
                 pass
 
@@ -134,6 +139,12 @@ class ScoreParser:
             try:
                 percentage = float(percentage_match.group(1))
                 score = percentage / 100.0
+                # Requirement 8.5: 範囲外の値に警告を出してクランプ
+                if score < 0.0 or score > 1.0:
+                    logger.warning(
+                        f"パーセンテージから変換されたスコアが範囲外です: {score} -> "
+                        f"{max(0.0, min(1.0, score))}にクランプしました"
+                    )
                 return max(0.0, min(1.0, score))
             except ValueError:
                 pass
@@ -146,12 +157,22 @@ class ScoreParser:
                 # 1より大きい値は百分率として扱うか、1.0でクランプ
                 if last_number > 1:
                     if last_number <= 100:
-                        return max(0.0, min(1.0, last_number / 100.0))
+                        score = last_number / 100.0
+                        return max(0.0, min(1.0, score))
                     else:
-                        return 1.0  # 100を超える場合は1.0でクランプ
+                        # Requirement 8.5: 100超過の場合の警告
+                        logger.warning(
+                            f"数値が範囲外です: {last_number} -> 1.0にクランプしました"
+                        )
+                        return 1.0
                 # 0-1の範囲ならそのまま使用
                 else:
-                    return max(0.0, last_number)
+                    original_score = last_number
+                    if original_score < 0.0:
+                        logger.warning(
+                            f"数値が範囲外です: {original_score} -> 0.0にクランプしました"
+                        )
+                    return max(0.0, original_score)
             except ValueError:
                 pass
 
