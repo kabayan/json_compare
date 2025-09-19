@@ -1,7 +1,11 @@
 """Progress tracking module for WebUI real-time progress display."""
 
+import io
+import re
+import sys
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -199,4 +203,148 @@ class ProgressTracker:
         """
         # This will be implemented in task 3 (SSE implementation)
         # For now, just a placeholder
+        pass
+
+
+class TqdmCaptureStream:
+    """Custom stream for capturing tqdm output while preserving original output."""
+
+    def __init__(self, original_stream, interceptor, task_id, progress_tracker):
+        """Initialize the capture stream.
+
+        Args:
+            original_stream: Original stdout/stderr
+            interceptor: TqdmInterceptor instance
+            task_id: Task ID for progress tracking
+            progress_tracker: ProgressTracker instance
+        """
+        self.original_stream = original_stream
+        self.interceptor = interceptor
+        self.task_id = task_id
+        self.progress_tracker = progress_tracker
+        self.buffer = io.StringIO()
+
+    def write(self, text):
+        """Write text to both captured buffer and original stream."""
+        # Write to original stream to preserve output
+        if hasattr(self.original_stream, 'write'):
+            self.original_stream.write(text)
+
+        # Capture for processing
+        self.buffer.write(text)
+
+        # Process the captured output if it looks like tqdm
+        if self.interceptor and hasattr(self.interceptor, 'process_output'):
+            self.interceptor.process_output(text, self.task_id, self.progress_tracker)
+
+        # Also call handle_output if it exists (for testing)
+        if self.interceptor and hasattr(self.interceptor, 'handle_output'):
+            self.interceptor.handle_output(text)
+
+        return len(text)
+
+    def flush(self):
+        """Flush both streams."""
+        if hasattr(self.original_stream, 'flush'):
+            self.original_stream.flush()
+        self.buffer.flush()
+
+    def __getattr__(self, name):
+        """Delegate other attributes to original stream."""
+        return getattr(self.original_stream, name)
+
+
+class TqdmInterceptor:
+    """Intercepts tqdm output and extracts progress information."""
+
+    def __init__(self):
+        """Initialize the TqdmInterceptor."""
+        self.captured_streams = {}
+
+    @contextmanager
+    def capture_tqdm(self, task_id: str, progress_tracker: 'ProgressTracker'):
+        """Context manager to capture tqdm output and send to ProgressTracker.
+
+        Args:
+            task_id: Task ID to associate with captured progress
+            progress_tracker: ProgressTracker instance to update
+
+        Yields:
+            None
+        """
+        # Save original streams
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+
+        try:
+            # Replace streams with capturing versions
+            sys.stdout = TqdmCaptureStream(original_stdout, self, task_id, progress_tracker)
+            sys.stderr = TqdmCaptureStream(original_stderr, self, task_id, progress_tracker)
+
+            yield
+
+        finally:
+            # Always restore original streams
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+
+    def parse_tqdm_output(self, output: str) -> Optional[Dict[str, any]]:
+        """Parse tqdm output string to extract progress information.
+
+        Args:
+            output: tqdm output string
+
+        Returns:
+            Dictionary with progress info or None if invalid format
+            Expected keys: current, total, percentage
+        """
+        if not output or not isinstance(output, str):
+            return None
+
+        # Regex pattern to match tqdm output format
+        # Format: "Description: 75%|████████████████████     | 750/1000行 [00:45<00:15, 16.67行/s]"
+        pattern = r'.*?(\d+)%\|.*?\|\s*(\d+)/(\d+)行\s*\['
+
+        match = re.search(pattern, output)
+        if not match:
+            return None
+
+        try:
+            percentage = float(match.group(1))
+            current = int(match.group(2))
+            total = int(match.group(3))
+
+            return {
+                "percentage": percentage,
+                "current": current,
+                "total": total
+            }
+        except (ValueError, IndexError):
+            return None
+
+    def process_output(self, output: str, task_id: str, progress_tracker: 'ProgressTracker') -> None:
+        """Process captured output and update progress tracker.
+
+        Args:
+            output: Captured output string
+            task_id: Task ID to update
+            progress_tracker: ProgressTracker instance
+        """
+        if not output or not output.strip():
+            return
+
+        # Parse the output to extract progress info
+        progress_info = self.parse_tqdm_output(output)
+        if progress_info:
+            # Update the progress tracker with extracted information
+            current = progress_info.get("current", 0)
+            progress_tracker.update_progress(task_id, current)
+
+    def handle_output(self, output: str) -> None:
+        """Handle captured output (for testing/mocking purposes).
+
+        Args:
+            output: Captured output string
+        """
+        # This method is primarily for testing
         pass

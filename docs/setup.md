@@ -62,18 +62,18 @@ npx cc-sdd@latest --lang ja
 - /kiro:spec-init 追加機能
 3. requirements.md の作成 (/kiro:spec-requirements)
     - .kiro/xx/requirement.md を確認
-    /kiro:steering llm-similarity-vllm
+/kiro:steering webui-progress-display
 
 4. design.md の作成 
-/kiro:spec-design llm-similarity-vllm
-/kiro:steering llm-similarity-vllm
+/kiro:spec-design webui-progress-display
+/kiro:steering webui-progress-display
 
 5. tasks.md の作成 
-/kiro:spec-tasks llm-similarity-vllm
-/kiro:steering llm-similarity-vllm
+/kiro:spec-tasks webui-progress-display
+/kiro:steering webui-progress-display
 
 6. タスク番号を指定して実行 
-/kiro:spec-impl llm-similarity-vllm タスク1から順番に進めて
+/kiro:spec-impl webui-progress-display タスク1から順番に進めて
 
 7. /kiro:spec-status 進捗を確認
 
