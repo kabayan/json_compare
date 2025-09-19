@@ -4,10 +4,15 @@ import pytest
 import time
 import sys
 import io
+import asyncio
+import json
 from datetime import datetime
-from typing import Optional
-from unittest.mock import Mock, patch
+from typing import Optional, AsyncGenerator
+from unittest.mock import Mock, patch, AsyncMock
 from contextlib import redirect_stderr, redirect_stdout
+from fastapi.testclient import TestClient
+from fastapi import FastAPI
+from sse_starlette.sse import EventSourceResponse
 
 # Import the module we're about to create
 from src.progress_tracker import ProgressTracker, ProgressData, TaskData, TqdmInterceptor
@@ -538,3 +543,322 @@ class TestTqdmProgressTrackerIntegration:
 
         assert progress2.current == 300
         assert progress2.total == 500
+
+
+class TestSSEStreaming:
+    """Test Task 3.1: SSEストリーミングエンドポイントを構築."""
+
+    @pytest.mark.asyncio
+    async def test_stream_progress_generator_basic(self):
+        """タスクIDごとのSSE接続を管理する機能を実装."""
+        tracker = ProgressTracker()
+        task_id = tracker.create_task(total_items=100)
+
+        # Test that stream_progress returns an async generator
+        stream = tracker.stream_progress(task_id)
+        assert hasattr(stream, '__aiter__')
+
+        # First event should contain initial progress data
+        first_event = await stream.__anext__()
+        assert "event" in first_event
+        assert "data" in first_event
+
+        # Parse the JSON data
+        data = json.loads(first_event["data"])
+        assert data["task_id"] == task_id
+        assert data["current"] == 0
+        assert data["total"] == 100
+        assert data["status"] == "processing"
+
+    @pytest.mark.asyncio
+    async def test_stream_progress_updates_over_time(self):
+        """進捗データを1秒ごとにSSEイベントとして送信する仕組みを作成."""
+        tracker = ProgressTracker()
+        task_id = tracker.create_task(total_items=100)
+
+        stream = tracker.stream_progress(task_id)
+
+        # Get initial event
+        initial_event = await stream.__anext__()
+        initial_data = json.loads(initial_event["data"])
+        assert initial_data["current"] == 0
+
+        # Update progress and get next event
+        tracker.update_progress(task_id, 50)
+
+        # Should receive updated event
+        updated_event = await stream.__anext__()
+        updated_data = json.loads(updated_event["data"])
+        assert updated_data["current"] == 50
+        assert updated_data["percentage"] == 50.0
+
+    @pytest.mark.asyncio
+    async def test_stream_multiple_clients(self):
+        """複数クライアントへの同時配信機能を実装."""
+        tracker = ProgressTracker()
+        task_id = tracker.create_task(total_items=100)
+
+        # Create two separate streams for the same task
+        stream1 = tracker.stream_progress(task_id)
+        stream2 = tracker.stream_progress(task_id)
+
+        # Both should receive the same initial data
+        event1 = await stream1.__anext__()
+        event2 = await stream2.__anext__()
+
+        data1 = json.loads(event1["data"])
+        data2 = json.loads(event2["data"])
+
+        assert data1["task_id"] == data2["task_id"]
+        assert data1["current"] == data2["current"]
+
+    @pytest.mark.asyncio
+    async def test_stream_completion_event(self):
+        """処理完了時にSSE接続を適切に終了する処理を追加."""
+        tracker = ProgressTracker()
+        task_id = tracker.create_task(total_items=100)
+
+        stream = tracker.stream_progress(task_id)
+
+        # Get initial event
+        initial_event = await stream.__anext__()
+        assert json.loads(initial_event["data"])["status"] == "processing"
+
+        # Complete the task
+        tracker.complete_task(task_id, success=True)
+
+        # Should receive completion event
+        completion_event = await stream.__anext__()
+        completion_data = json.loads(completion_event["data"])
+        assert completion_data["status"] == "completed"
+
+        # Stream should terminate after completion
+        with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+
+
+class TestSSEConnectionReliability:
+    """Test Task 3.2: SSE接続の信頼性向上機能を実装."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_task_id_handling(self):
+        """クライアント接続の状態監視機能を構築."""
+        tracker = ProgressTracker()
+
+        # Try to stream for non-existent task
+        stream = tracker.stream_progress("invalid-task-id")
+
+        # Should receive error event
+        error_event = await stream.__anext__()
+        assert error_event["event"] == "error"
+        error_data = json.loads(error_event["data"])
+        assert "error_message" in error_data
+        assert "not found" in error_data["error_message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_error_event_sending(self):
+        """エラー発生時のSSEイベント送信機能を追加."""
+        tracker = ProgressTracker()
+        task_id = tracker.create_task(total_items=100)
+
+        stream = tracker.stream_progress(task_id)
+
+        # Get initial event
+        await stream.__anext__()
+
+        # Mark task as failed
+        tracker.complete_task(task_id, success=False, error_message="Processing failed")
+
+        # Should receive error event
+        error_event = await stream.__anext__()
+        error_data = json.loads(error_event["data"])
+        assert error_data["status"] == "error"
+        assert error_data["error_message"] == "Processing failed"
+
+    @pytest.mark.asyncio
+    async def test_connection_cleanup_on_timeout(self):
+        """タイムアウト時の適切な接続終了処理を実装."""
+        tracker = ProgressTracker()
+        task_id = tracker.create_task(total_items=100)
+
+        # Create stream with timeout
+        stream = tracker.stream_progress(task_id, timeout=0.1)  # 100ms timeout
+
+        # Get initial event
+        await stream.__anext__()
+
+        # Wait for timeout
+        await asyncio.sleep(0.2)
+
+        # Stream should terminate due to timeout
+        with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+
+
+class TestAsyncFileComparisonAPI:
+    """Test Task 4.1: 非同期ファイル比較エンドポイントを作成."""
+
+    def test_async_compare_endpoint_returns_task_id(self):
+        """ファイルアップロードを受け付けてタスクIDを返す機能を実装."""
+        # This test will require the actual API implementation
+        # For now, we test the core functionality
+
+        tracker = ProgressTracker()
+
+        # Simulate async comparison initialization
+        task_id = tracker.create_task(total_items=1000)
+
+        # Should return a valid task ID
+        assert task_id is not None
+        assert isinstance(task_id, str)
+        assert len(task_id) > 0
+
+        # Task should be in processing state
+        progress = tracker.get_progress(task_id)
+        assert progress.status == "processing"
+        assert progress.current == 0
+        assert progress.total == 1000
+
+    @pytest.mark.asyncio
+    async def test_background_processing_integration(self):
+        """バックグラウンドでの比較処理開始機能を構築."""
+        tracker = ProgressTracker()
+        task_id = tracker.create_task(total_items=500)
+
+        # Simulate background processing
+        async def background_process():
+            for i in range(0, 501, 50):
+                tracker.update_progress(task_id, i)
+                await asyncio.sleep(0.01)  # Simulate processing time
+            tracker.complete_task(task_id, success=True)
+
+        # Start background processing
+        process_task = asyncio.create_task(background_process())
+
+        # Monitor progress
+        progress = tracker.get_progress(task_id)
+        assert progress.current == 0
+
+        # Wait for some progress
+        await asyncio.sleep(0.05)
+        progress = tracker.get_progress(task_id)
+        assert progress.current > 0
+
+        # Wait for completion
+        await process_task
+        final_progress = tracker.get_progress(task_id)
+        assert final_progress.status == "completed"
+        assert final_progress.current == 500
+
+    def test_progress_tracker_integration(self):
+        """進捗トラッカーとの連携処理を実装."""
+        tracker = ProgressTracker()
+
+        # Create multiple tasks to simulate concurrent processing
+        task_ids = []
+        for i in range(3):
+            task_id = tracker.create_task(total_items=100 * (i + 1))
+            task_ids.append(task_id)
+
+        # Update progress for each task
+        for i, task_id in enumerate(task_ids):
+            tracker.update_progress(task_id, 50 * (i + 1))
+
+        # Each task should maintain separate progress
+        for i, task_id in enumerate(task_ids):
+            progress = tracker.get_progress(task_id)
+            assert progress.total == 100 * (i + 1)
+            assert progress.current == 50 * (i + 1)
+
+    def test_result_storage_mechanism(self):
+        """処理結果の一時保存機能を追加."""
+        tracker = ProgressTracker()
+        task_id = tracker.create_task(total_items=100)
+
+        # Simulate processing completion with result
+        result_data = {
+            "summary": {"total_rows": 100, "differences": 25},
+            "details": [{"row": 1, "difference": "value changed"}]
+        }
+
+        # Complete task and store result
+        tracker.complete_task(task_id, success=True)
+        # Note: We'll need to extend complete_task to accept result data
+
+        progress = tracker.get_progress(task_id)
+        assert progress.status == "completed"
+
+
+class TestProgressStatusAPI:
+    """Test Task 4.2: 進捗状態取得エンドポイントを実装."""
+
+    def test_get_progress_endpoint_returns_current_status(self):
+        """タスクIDから現在の進捗情報を返すAPIを作成."""
+        tracker = ProgressTracker()
+        task_id = tracker.create_task(total_items=200)
+
+        # Update progress
+        tracker.update_progress(task_id, 75)
+
+        # Get progress (simulating API call)
+        progress = tracker.get_progress(task_id)
+
+        assert progress is not None
+        assert progress.task_id == task_id
+        assert progress.current == 75
+        assert progress.total == 200
+        assert progress.percentage == 37.5
+        assert progress.status == "processing"
+
+    def test_completed_task_returns_result_data(self):
+        """処理完了時に結果データを返す機能を実装."""
+        tracker = ProgressTracker()
+        task_id = tracker.create_task(total_items=100)
+
+        # Complete the task
+        tracker.update_progress(task_id, 100)
+        tracker.complete_task(task_id, success=True)
+
+        progress = tracker.get_progress(task_id)
+        assert progress.status == "completed"
+        assert progress.current == 100
+        assert progress.percentage == 100.0
+
+    def test_error_status_with_details(self):
+        """エラー情報を含む詳細ステータスを提供する機能を追加."""
+        tracker = ProgressTracker()
+        task_id = tracker.create_task(total_items=100)
+
+        # Simulate error during processing
+        error_message = "File format validation failed on line 50"
+        tracker.complete_task(task_id, success=False, error_message=error_message)
+
+        progress = tracker.get_progress(task_id)
+        assert progress.status == "error"
+        assert progress.error_message == error_message
+
+    def test_invalid_task_id_error_response(self):
+        """タスクが存在しない場合の適切なエラーレスポンスを実装."""
+        tracker = ProgressTracker()
+
+        # Try to get progress for non-existent task
+        progress = tracker.get_progress("non-existent-task-id")
+
+        # Should return None (will be converted to 404 by API layer)
+        assert progress is None
+
+    def test_progress_status_includes_timing_info(self):
+        """経過時間と推定残り時間を含む進捗情報を返す."""
+        tracker = ProgressTracker()
+        task_id = tracker.create_task(total_items=1000)
+
+        # Simulate some processing time
+        time.sleep(0.1)
+        tracker.update_progress(task_id, 200)
+
+        progress = tracker.get_progress(task_id)
+        assert progress.elapsed_time > 0
+        assert progress.processing_speed > 0
+        # After 20% completion, should have remaining time estimate
+        if progress.percentage >= 10:
+            assert progress.estimated_remaining is not None

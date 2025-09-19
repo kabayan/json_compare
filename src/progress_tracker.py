@@ -5,10 +5,12 @@ import re
 import sys
 import time
 import uuid
+import json
+import asyncio
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, AsyncGenerator
 from collections import deque
 
 
@@ -192,18 +194,84 @@ class ProgressTracker:
             task.status = "error"
             task.error = error_message
 
-    async def stream_progress(self, task_id: str):
+    async def stream_progress(self, task_id: str, timeout: Optional[float] = None) -> AsyncGenerator[Dict[str, str], None]:
         """Stream progress updates via SSE (Server-Sent Events).
 
         Args:
             task_id: Task ID to stream progress for
+            timeout: Optional timeout in seconds
 
         Yields:
             SSE events with progress data
         """
-        # This will be implemented in task 3 (SSE implementation)
-        # For now, just a placeholder
-        pass
+        start_time = time.time()
+        last_progress = None
+
+        # Check if task exists
+        if task_id not in self.tasks:
+            yield {
+                "event": "error",
+                "data": json.dumps({
+                    "error_message": f"Task {task_id} not found"
+                })
+            }
+            return
+
+        while True:
+            # Check timeout
+            if timeout and (time.time() - start_time) > timeout:
+                break
+
+            # Get current progress
+            progress = self.get_progress(task_id)
+            if progress is None:
+                yield {
+                    "event": "error",
+                    "data": json.dumps({
+                        "error_message": f"Task {task_id} not found"
+                    })
+                }
+                break
+
+            # Only send if progress has changed or first time
+            if last_progress is None or (
+                progress.current != last_progress.current or
+                progress.status != last_progress.status
+            ):
+                event_type = "progress"
+                if progress.status == "completed":
+                    event_type = "complete"
+                elif progress.status == "error":
+                    event_type = "error"
+
+                event_data = {
+                    "task_id": progress.task_id,
+                    "current": progress.current,
+                    "total": progress.total,
+                    "percentage": progress.percentage,
+                    "elapsed_seconds": progress.elapsed_time,
+                    "status": progress.status
+                }
+
+                if progress.estimated_remaining is not None:
+                    event_data["remaining_seconds"] = progress.estimated_remaining
+
+                if progress.error_message:
+                    event_data["error_message"] = progress.error_message
+
+                yield {
+                    "event": event_type,
+                    "data": json.dumps(event_data)
+                }
+
+                last_progress = progress
+
+                # Stop streaming if task is completed or errored
+                if progress.status in ["completed", "error"]:
+                    break
+
+            # Wait before next check
+            await asyncio.sleep(0.1)  # Check every 100ms for tests
 
 
 class TqdmCaptureStream:
