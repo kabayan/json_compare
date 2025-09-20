@@ -1712,16 +1712,12 @@ async def process_comparison_async(task_id: str, file_path: str, output_type: st
 async def compare_dual_async(
     file1: UploadFile = File(...),
     file2: UploadFile = File(...),
-    column1: str = Form("inference1"),
-    column2: str = Form("inference2"),
+    column: str = Form("inference"),
     output_type: str = Form("score"),
     gpu: bool = Form(False)
 ):
     """非同期で2ファイル比較を実行し、タスクIDを返す"""
     try:
-        # タスクIDを生成
-        task_id = str(uuid.uuid4())
-
         # ファイルを一時保存
         temp_files = []
         for file in [file1, file2]:
@@ -1734,14 +1730,13 @@ async def compare_dual_async(
         with open(temp_files[0], 'r', encoding='utf-8') as f:
             total_lines = sum(1 for _ in f)
 
-        # 進捗トラッカーにタスクを作成
-        progress_tracker.create_task(total_items=total_lines)
-        progress_tracker.log_task_creation(task_id, total_lines)
+        # 進捗トラッカーにタスクを作成（タスクIDを取得）
+        task_id = progress_tracker.create_task(total_items=total_lines)
 
         # バックグラウンドで比較処理を開始
         asyncio.create_task(
             process_dual_comparison_async(
-                task_id, temp_files[0], temp_files[1], column1, column2, output_type, gpu
+                task_id, temp_files[0], temp_files[1], column, output_type, gpu
             )
         )
 
@@ -1759,7 +1754,7 @@ async def compare_dual_async(
 
 
 async def process_dual_comparison_async(
-    task_id: str, file1_path: str, file2_path: str, column1: str, column2: str, output_type: str, gpu: bool
+    task_id: str, file1_path: str, file2_path: str, column: str, output_type: str, gpu: bool
 ):
     """バックグラウンドで2ファイル比較を実行"""
     start_time = time.time()
@@ -1776,8 +1771,8 @@ async def process_dual_comparison_async(
         with tqdm_interceptor.capture_tqdm(task_id, progress_tracker):
             result = await asyncio.get_event_loop().run_in_executor(
                 None,
-                extractor.process,
-                file1_path, file2_path, column1, column2, output_type
+                extractor.compare_dual_files,
+                file1_path, file2_path, column, output_type, gpu
             )
 
         # 処理完了
@@ -1788,8 +1783,7 @@ async def process_dual_comparison_async(
         # メトリクス記録
         progress_tracker.record_metrics(task_id, {
             "comparison_type": "dual_file",
-            "column1": column1,
-            "column2": column2,
+            "column": column,
             "output_type": output_type,
             "gpu_enabled": gpu,
             "processing_duration": duration,

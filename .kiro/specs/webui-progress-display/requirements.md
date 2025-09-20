@@ -112,3 +112,21 @@ JSON Compare WebUIに、処理の進捗状況をリアルタイムで表示す�
 5. IF 処理結果に_metadataが含まれる THEN ダウンロードファイル SHALL メタデータも含めた完全なAPIレスポンスを保存する
 6. WHEN ダウンロードが完了した THEN WebUI SHALL ユーザーに「ダウンロード完了」の通知を表示する
 7. IF ダウンロード中にエラーが発生した THEN WebUI SHALL エラーメッセージと再試行ボタンを表示する
+
+### Requirement 10: WebUI 2ファイル比較の実装検証とAPI正確性確認
+**目的:** QAエンジニアとして、現在実装済みのWebUI進捗表示機能に対して、2ファイル指定時の出力形式（スコア/ファイル）とLLM使用の有無による全組み合わせが、正しいAPIエンドポイントを呼び出し期待される結果を返すことを、Playwright MCPによる実機テストで包括的に検証したい。
+
+#### 受け入れ基準
+
+1. WHEN WebUIで2ファイル比較を埋め込みモード・スコア形式で実行する THEN Playwright MCPテストシステム SHALL `/api/compare/dual`エンドポイントが呼び出され、HTTPステータス200とcalculation_method="embedding"を含むスコア形式レスポンスが返されることを検証する
+2. WHEN WebUIで2ファイル比較を埋め込みモード・ファイル形式で実行する THEN Playwright MCPテストシステム SHALL `/api/compare/dual`エンドポイントが呼び出され、detailed_results配列を含むファイル形式レスポンスが返されることを検証する
+3. WHEN WebUIで2ファイル比較をLLMモード・スコア形式で実行する THEN Playwright MCPテストシステム SHALL `/api/compare/dual/llm`エンドポイントが呼び出され、calculation_method="llm"とLLMメタデータを含むスコア形式レスポンスが返されることを検証する
+4. WHEN WebUIで2ファイル比較をLLMモード・ファイル形式で実行する THEN Playwright MCPテストシステム SHALL `/api/compare/dual/llm`エンドポイントが呼び出され、detailed_results配列とLLM処理メタデータを含むファイル形式レスポンスが返されることを検証する
+5. WHERE Playwright MCPが各組み合わせテストを実行する THE テストシステム SHALL ネットワーク監視機能で実際のHTTPリクエスト（URL、メソッド、ヘッダー、ボディ）とレスポンス（ステータス、構造、内容）を完全に記録する
+6. IF 各APIレスポンスが受信された THEN テストシステム SHALL 必須フィールド（score、total_lines、_metadata）の存在、データ型の正確性、メタデータの一貫性（calculation_method、source_files、column_compared）を検証する
+7. WHERE WebUIが進捗表示を行う THE テストシステム SHALL setIntervalポーリングによる進捗更新が正常に動作し、処理完了時に正しい結果表示に切り替わることを確認する
+8. WHEN LLMモードでvLLM APIエラーが発生した THEN テストシステム SHALL 適切なエラーメッセージがWebUIに表示され、処理が安全に停止することを確認する
+9. IF WebUI表示内容とAPIレスポンス内容に相違がある THEN テストシステム SHALL 不整合の詳細（期待値vs実際値、差分箇所、影響範囲）を特定し、デバッグ情報付きでレポートする
+10. WHERE 各テストパターンが完了した THE テストシステム SHALL 4つの組み合わせ（埋め込み×スコア、埋め込み×ファイル、LLM×スコア、LLM×ファイル）すべての成功/失敗状態、API呼び出し履歴、応答時間、エラー詳細を含む包括的テストレポートを生成する
+11. WHEN 実装済み進捗表示機能とのテスト統合を行う THEN テストシステム SHALL 2ファイル比較実行中の進捗表示（プログレスバー、経過時間、推定残り時間）が正確に動作することを検証する
+12. IF テスト実行中に予期しないエラーが発生した THEN テストシステム SHALL エラー発生時点のスクリーンショット、コンソールログ、ネットワークログ、DOM状態を自動収集し、再現可能な詳細レポートを作成する

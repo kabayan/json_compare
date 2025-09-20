@@ -62,7 +62,7 @@ src/
 ├── download_and_error_manager.py    # Download handling and error management
 ├── comparison_result_validator.py   # Cross-method result validation and anomaly detection
 ├── mcp_wrapper.py                   # Lightweight Playwright MCP wrapper
-├── progress_tracker.py              # [計画中] WebUI用進捗追跡とリアルタイム更新
+├── progress_tracker.py              # WebUI用進捗追跡とリアルタイム更新（setIntervalポーリング方式）
 └── archives/                      # Archived/deprecated code
     └── merge_jsonl.py             # Legacy JSONL merging utility
 ```
@@ -87,6 +87,12 @@ tests/
 ├── test_playwright_e2e.py                # Comprehensive E2E tests
 ├── test_playwright_mcp_wrapper.py        # Playwright MCP軽量ラッパーテスト（実装済み）
 ├── test_strategy_integration.py          # Strategy pattern tests
+├── test_progress_tracker.py              # Progress tracking tests
+├── test_progress_tracker_unit.py         # Progress tracker unit tests
+├── test_progress_integration.py          # Progress tracking integration tests
+├── test_webui_progress_components.py     # WebUI progress component tests
+├── test_webui_progress_comprehensive.py  # Comprehensive WebUI progress tests
+├── test_webui_progress_playwright_mcp.py # Playwright MCP WebUI progress tests
 ├── test_comparison_result_validator.py   # Cross-method validation tests
 ├── test_console_network_monitor.py       # Console/network monitoring tests
 ├── test_drag_drop_manager.py             # Drag-and-drop operation tests
@@ -186,7 +192,7 @@ docs/
 - **form_interaction_manager.py**: Form field interaction, validation, and submission handling
 - **download_and_error_manager.py**: Download operations, error recovery, and status management
 - **mcp_wrapper.py**: Lightweight wrapper for Playwright MCP operations with error handling and retry logic
-- **progress_tracker.py** [計画中]: WebUI用進捗追跡、ログ統合、リアルタイム配信機能
+- **progress_tracker.py**: WebUI用進捗追跡、ログ統合、setIntervalポーリング方式によるリアルタイム配信機能
 
 ### Layered Architecture
 1. **Presentation Layer**: CLI (`__main__.py`), API (`api.py`), Web UI
@@ -206,11 +212,17 @@ docs/
 5. **Validation Layer**:
    - Result validation (`comparison_result_validator.py`)
    - Quality assurance and anomaly detection
-6. **Test Infrastructure Layer**:
+6. **Progress Tracking Layer**:
+   - Real-time progress monitoring (`progress_tracker.py`)
+   - tqdm output interception and parsing
+   - setInterval polling-based updates for WebUI
+   - Task lifecycle management and status tracking
+7. **Test Infrastructure Layer**:
    - Playwright MCP wrapper (`mcp_wrapper.py`)
    - WebUI test automation (`console_network_monitor.py`, `drag_drop_manager.py`)
    - LLM configuration testing (`llm_configuration_manager.py`)
    - Navigation testing (`tab_navigation_manager.py`)
+   - Progress tracking testing (6 dedicated test modules)
 
 ### Data Flow
 ```
@@ -316,10 +328,10 @@ from .utils import parse_jsonl
 /api/prompts/upload         # Upload custom prompt template
 ```
 
-### Progress Tracking Endpoints [計画中]
+### Progress Tracking Endpoints
 ```
-/api/progress/{task_id}     # 処理進捗状況の取得
-/api/progress/stream        # SSE/WebSocketによるリアルタイム進捗配信
+/api/progress/{task_id}        # 処理進捗状況の取得（ポーリング方式）
+/api/progress/stream/{task_id} # SSE進捗配信（実装済み、ポーリング方式が主流）
 ```
 
 ## Key Architectural Principles

@@ -1,0 +1,38 @@
+[
+  {
+    "case": "Case1_Embedding_Score",
+    "dual_type": "score",
+    "use_llm": false,
+    "success": false,
+    "result_text": "タイムアウトまたはエラー: Page.wait_for_selector: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator(\"#dualResult\") to be visible\n",
+    "screenshot": "test_screenshots/Case1_Embedding_Score_20250920_051550.png",
+    "timestamp": "20250920_051550"
+  },
+  {
+    "case": "Case2_Embedding_File",
+    "dual_type": "file",
+    "use_llm": false,
+    "success": false,
+    "result_text": "タイムアウトまたはエラー: Page.wait_for_selector: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator(\"#dualResult\") to be visible\n",
+    "screenshot": "test_screenshots/Case2_Embedding_File_20250920_051625.png",
+    "timestamp": "20250920_051625"
+  },
+  {
+    "case": "Case3_LLM_Score",
+    "dual_type": "score",
+    "use_llm": true,
+    "success": false,
+    "result_text": "タイムアウトまたはエラー: Page.wait_for_selector: Timeout 60000ms exceeded.\nCall log:\n  - waiting for locator(\"#dualResult\") to be visible\n",
+    "screenshot": "test_screenshots/Case3_LLM_Score_20250920_051730.png",
+    "timestamp": "20250920_051730"
+  },
+  {
+    "case": "Case4_LLM_File",
+    "dual_type": "file",
+    "use_llm": true,
+    "success": false,
+    "result_text": "タイムアウトまたはエラー: Page.wait_for_selector: Timeout 60000ms exceeded.\nCall log:\n  - waiting for locator(\"#dualResult\") to be visible\n",
+    "screenshot": "test_screenshots/Case4_LLM_File_20250920_051835.png",
+    "timestamp": "20250920_051835"
+  }
+]

@@ -283,3 +283,77 @@
   - 再試行ボタンの実装と動作確認
   - ネットワークエラーやタイムアウトへの対処
   - _Requirements: 9.7_
+
+### 13. 2ファイル比較検証システム実装 (Requirement 10)
+- [x] 13.1 Test Management Framework基盤構築
+  - 4つの組み合わせ（埋め込み/LLM × スコア/ファイル）テストの全体制御機能を実装
+  - テスト実行状態と結果データの管理システムを構築
+  - 各テストケース単位での独立トランザクション処理を実装
+  - TestExecutionResultインターフェース（成功/失敗数、実行時間、詳細結果）を定義
+  - validateDualFileComparisonメソッドで組み合わせ別検証を実装
+  - _Requirements: 10.10, 10.11, 10.12_
+
+- [x] 13.2 Playwright MCP Integration Layer強化
+  - 既存のPlaywright MCPフレームワークとの統合機能を拡張
+  - 2ファイル比較のWebUI操作制御機能（setupDualFileComparison）を実装
+  - ファイル選択、オプション設定、比較実行の自動化処理を構築
+  - 進捗表示動作キャプチャ（captureProgressDisplay）機能を実装
+  - APIレスポンス抽出（extractAPIResponse）とデバッグ情報収集機能を追加
+  - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.11_
+
+- [x] 13.3 Network Monitor Enhancement実装
+  - 2ファイル比較時のHTTPリクエスト/レスポンス監視機能を構築
+  - APIエンドポイント正確性検証（validateAPIEndpoint）メソッドを実装
+  - HTTPRequestRecord構造でのリクエスト記録とタイミング情報取得
+  - リアルタイムネットワーク監視による即座検証機能を構築
+  - recordedRequestsによる完全なAPI呼び出し履歴の記録機能を実装
+  - _Requirements: 10.5, 10.10_
+
+- [ ] 13.4 API Response Validation Engine実装
+  - APIレスポンス構造とメタデータの包括的検証エンジンを構築
+  - validateScoreResponse/validateFileResponseメソッドの実装
+  - 必須フィールド（score、total_lines、_metadata）の存在確認機能を追加
+  - データ型正確性とメタデータ一貫性（calculation_method、source_files、column_compared）の検証
+  - ValidationResultインターフェースで詳細なエラー・警告情報を提供
+  - _Requirements: 10.6, 10.9_
+
+- [ ] 13.5 Test Reporter包括レポート生成実装
+  - 4つの組み合わせテスト結果の集約とレポート生成システムを構築
+  - ComprehensiveTestReport（実行サマリー、組み合わせ結果、パフォーマンス指標）の実装
+  - エラー分析（ErrorAnalysis）と推奨事項（recommendations）の自動生成機能
+  - markdown/json/html形式での結果エクスポート機能を実装
+  - テストレポートの自動保存とファイル管理機能を追加
+  - _Requirements: 10.10, 10.12_
+
+### 14. 2ファイル比較検証システム統合テスト
+- [ ] 14.1 4つの組み合わせ包括検証実装
+  - 埋め込みモード・スコア形式での`/api/compare/dual`エンドポイント検証
+  - 埋め込みモード・ファイル形式でのdetailed_results配列検証
+  - LLMモード・スコア形式での`/api/compare/dual/llm`エンドポイント検証
+  - LLMモード・ファイル形式でのLLM処理メタデータ検証
+  - 各パターンでHTTPステータス200とcalculation_methodの正確性確認
+  - _Requirements: 10.1, 10.2, 10.3, 10.4_
+
+- [ ] 14.2 進捗表示統合検証実装
+  - setIntervalポーリングによる進捗更新の正常動作確認機能を実装
+  - プログレスバー、経過時間、推定残り時間の表示精度検証
+  - 処理完了時の正しい結果表示への切り替え確認機能を追加
+  - 2ファイル比較実行中の進捗表示精度の検証システムを構築
+  - clearIntervalによるポーリング停止動作の確認機能を実装
+  - _Requirements: 10.7, 10.11_
+
+- [ ] 14.3 エラーハンドリング包括検証実装
+  - LLMモードでvLLM APIエラー発生時の適切なエラーメッセージ表示確認
+  - 処理の安全停止機能の検証システムを構築
+  - WebUI表示内容とAPIレスポンス内容の整合性チェック機能を実装
+  - 不整合発生時の詳細レポート（期待値vs実際値、差分箇所）生成機能
+  - 最大5回エラーリトライ機能とエラーメッセージ表示の検証
+  - _Requirements: 10.8, 10.9_
+
+- [ ] 14.4 デバッグ情報収集・分析システム実装
+  - テスト実行中の予期しないエラー自動収集機能を構築
+  - スクリーンショット、コンソールログ、ネットワークログの自動保存
+  - DOM状態の自動キャプチャと再現可能な詳細レポート作成機能
+  - エラーパターン分析と対策提案の自動生成システムを実装
+  - テスト環境の状態診断と問題特定支援機能を追加
+  - _Requirements: 10.12_

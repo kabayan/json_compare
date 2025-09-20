@@ -1,256 +1,302 @@
 # Technical Design Document
 
 ## 概要
-JSON Compare WebUIに処理進捗をリアルタイムで表示する機能を追加します。現在コンソールのtqdmプログレスバーで表示されている進捗情報をキャプチャし、WebUI上でビジュアルに表示します。Server-Sent Events (SSE) を使用してサーバーからクライアントへリアルタイムに進捗データをストリーミングし、処理済み件数、経過時間、推定残り時間を表示します。
 
-**目的**: この機能はWebUIユーザーに処理の透明性を提供し、長時間処理の際の不安を解消します。
-**ユーザー**: WebUIからファイルをアップロードして比較処理を実行するユーザーが主な対象です。
-**影響**: 現在の同期的なレスポンス方式を非同期ストリーミング方式に拡張し、ユーザー体験を大幅に改善します。
+JSON Compare WebUIの進捗表示機能および2ファイル比較機能に対する包括的検証システムの設計です。現在実装済みのsetIntervalポーリング方式による進捗表示機能に加えて、2ファイル指定時の出力形式（スコア/ファイル）とLLM使用の有無による全組み合わせが正しいAPIエンドポイントを呼び出し、期待される結果を返すことをPlaywright MCPによる実機テストで検証します。
+
+**目的**: 実装済み機能の品質保証と、2ファイル比較時のAPI呼び出し正確性を自動検証により担保する。
+**ユーザー**: QAエンジニアおよびWebUIユーザーが主な対象。実装済み進捗表示機能の継続利用と、2ファイル比較の信頼性向上を提供する。
+**影響**: 既存の進捗表示機能を保持しつつ、包括的テスト検証により品質保証レベルを向上させる。
 
 ### ゴール
-- tqdm出力から進捗データを抽出してWebUIに配信
-- リアルタイムでプログレスバーと時間情報を更新
-- 処理速度から残り時間を推定して表示
+- 実装済み進捗表示機能の動作確認と品質保証
+- 2ファイル比較時のAPI呼び出し正確性の自動検証
+- Playwright MCPによる実機テスト基盤の活用
+- 4つの組み合わせ（埋め込み/LLM × スコア/ファイル）の包括的検証
 
 ### 非ゴール
-- 複数の並列処理タスクの管理
-- 過去の処理履歴の永続化
-- バッチ処理のキューイング機能
+- 既存進捗表示機能の機能変更や再実装
+- 新しいテストフレームワークの導入
+- パフォーマンス最適化や大規模データ処理対応
 
 ## アーキテクチャ
 
 ### 既存アーキテクチャの分析
-現在のシステムは以下の構成です：
-- FastAPIベースのWeb API (`src/api.py`)
-- tqdmによるコンソール進捗表示（`src/__main__.py`）
-- 構造化ログシステム（`src/logger.py`）
-- HTMLベースのシンプルなWeb UI（`/ui`エンドポイント）
+現在のシステムは以下の構成で実装済み：
+- FastAPIベースのWeb API (`src/api.py`) - 進捗トラッキングエンドポイント実装済み
+- setIntervalポーリング方式によるWebUI進捗表示 - 完全実装済み
+- 進捗追跡システム (`src/progress_tracker.py`) - 21.7KBの完全実装
+- Playwright MCPフレームワーク - 12の専門化されたテストマネージャー統合済み
+- 2ファイル比較APIエンドポイント (`/api/compare/dual`, `/api/compare/dual/llm`) - 実装済み
 
 ### ハイレベルアーキテクチャ
 
 ```mermaid
 graph TB
-    UI[Web UI]
+    WebUI[Web UI]
     API[FastAPI Server]
     PT[Progress Tracker]
-    TI[tqdm Interceptor]
-    PC[Process Core]
+    TMF[Test Management Framework]
+    PMW[Playwright MCP Wrapper]
+    NM[Network Monitor]
+    VE[Validation Engine]
+    TR[Test Reporter]
 
-    UI -->|File Upload| API
-    API -->|Start Process| PC
-    PC -->|tqdm Output| TI
-    TI -->|Parse Progress| PT
-    PT -->|SSE Stream| UI
-    UI -->|Display Progress| UI
+    WebUI -->|2ファイル比較実行| API
+    API -->|進捗トラッキング| PT
+    PT -->|setIntervalポーリング| WebUI
+
+    TMF -->|実機テスト制御| PMW
+    PMW -->|WebUI操作| WebUI
+    PMW -->|ネットワーク監視| NM
+    NM -->|API呼び出し記録| VE
+    VE -->|結果検証| TR
+    TR -->|包括的レポート| TMF
 ```
 
 **アーキテクチャ統合**:
-- 既存パターンの保持: FastAPIのエンドポイント構成、ロギングシステム
-- 新規コンポーネントの根拠: tqdmインターセプターは進捗データ抽出に必要、Progress TrackerはSSE配信に必要
-- 技術スタックとの整合: FastAPIのSSE機能を活用、既存のロギング基盤を拡張
-- ステアリング準拠: structure.mdで計画された`progress_tracker.py`モジュールを実装
+- 既存パターンの保持: FastAPIエンドポイント構造、setIntervalポーリング方式、Playwright MCPフレームワーク
+- 新規コンポーネントの根拠: テスト検証エンジンは品質保証に必要、ネットワーク監視はAPI呼び出し正確性確認に必要
+- 技術スタックとの整合: 既存のPlaywright MCP基盤を活用、FastAPIエンドポイント検証に最適化
 
 ### 技術整合性
 
 **既存スタックとの統合**:
-- FastAPIの組み込みSSEサポートを活用
-- 既存のロギングシステムを拡張して進捗情報を記録
-- tqdmの出力をリダイレクトして解析
+- Playwright MCPフレームワークの12の専門化されたテストマネージャーを活用
+- 既存の軽量ラッパー (`mcp_wrapper.py`) を基盤として利用
+- FastAPIの既存エンドポイント構造に準拠した検証設計
 
 **新規依存関係**:
-- SSE実装のための`sse-starlette`（FastAPI互換）
-- 進捗データのインメモリ管理用辞書構造
+- 既存Playwright MCPフレームワーク内での拡張のため新規依存関係なし
+- ネットワーク監視機能は既存 `console_network_monitor.py` を活用
 
 ### 主要な設計判断
 
-**判断1: SSE vs WebSocket**
-- **コンテキスト**: サーバーからクライアントへの一方向データ配信が必要
-- **選択したアプローチ**: Server-Sent Events (SSE)
-- **根拠**: 実装がシンプルで、一方向通信に最適化されており、自動再接続機能を持つ
-- **トレードオフ**: 双方向通信は不可能だが、進捗表示には不要
+**判断1: 既存Playwright MCPフレームワーク活用 vs 新規テストフレームワーク**
+- **コンテキスト**: 2ファイル比較検証のためのテスト基盤が必要
+- **選択したアプローチ**: 既存のPlaywright MCPフレームワーク活用
+- **根拠**: 12の専門化されたテストマネージャーが既に統合済み、43テストケースで100%自動化実績あり
+- **トレードオフ**: 新規フレームワークの柔軟性は失うが、実装コストと統合リスクを大幅削減
 
-**判断2: tqdm出力のキャプチャ方法**
-- **コンテキスト**: tqdmの進捗情報を取得する必要がある
-- **選択したアプローチ**: StringIOによる出力リダイレクトと正規表現パース
-- **根拠**: tqdmの内部APIに依存せず、安定した動作が期待できる
-- **トレードオフ**: パフォーマンスオーバーヘッドがあるが、1秒更新なら問題ない
+**判断2: リアルタイム検証 vs バッチ検証**
+- **コンテキスト**: 2ファイル比較時のAPI呼び出しとレスポンス検証方法
+- **選択したアプローチ**: リアルタイムネットワーク監視による即座検証
+- **根拠**: 既存のネットワーク監視機能を活用し、実際のAPI呼び出しを即座に検証可能
+- **トレードオフ**: バッチ処理による効率性は劣るが、実機テストでの正確性と即応性を確保
 
 ## システムフロー
 
-### 処理開始から完了までのシーケンス
+### 2ファイル比較検証フロー
 
 ```mermaid
 sequenceDiagram
-    participant U as User/Browser
-    participant W as Web UI
-    participant A as API Server
-    participant P as Progress Tracker
-    participant T as tqdm Interceptor
-    participant C as Core Process
+    participant TMF as Test Management Framework
+    participant PMW as Playwright MCP Wrapper
+    participant WebUI as Web UI
+    participant API as FastAPI Server
+    participant NM as Network Monitor
+    participant VE as Validation Engine
+    participant TR as Test Reporter
 
-    U->>W: Upload File
-    W->>A: POST /api/compare
-    A->>P: Create Task ID
-    A->>C: Start Process
-    A-->>W: Return Task ID
-    W->>A: GET /api/progress/stream/{task_id}
+    TMF->>PMW: 4つの組み合わせテスト開始
 
-    loop Every 1 second
-        C->>T: tqdm Output
-        T->>P: Parse & Store Progress
-        P->>W: SSE Event (progress data)
-        W->>U: Update Display
+    loop 各組み合わせ（埋め込み/LLM × スコア/ファイル）
+        PMW->>WebUI: ファイル選択とオプション設定
+        PMW->>WebUI: 比較実行開始
+        WebUI->>API: 2ファイル比較API呼び出し
+        NM->>NM: HTTPリクエスト/レスポンス記録
+        API->>WebUI: 進捗データとsetIntervalポーリング
+        PMW->>PMW: 進捗表示動作確認
+        API->>WebUI: 最終結果返却
+        PMW->>VE: UIとAPIレスポンス取得
+        VE->>VE: エンドポイント正確性検証
+        VE->>VE: レスポンス構造検証
+        VE->>VE: メタデータ一貫性検証
+        VE->>TR: 検証結果記録
     end
 
-    C->>P: Process Complete
-    P->>W: SSE Event (complete)
-    W->>U: Show Results
+    TR->>TMF: 包括的テストレポート生成
 ```
 
 ## コンポーネントとインターフェース
 
-### バックエンド層
+### テスト管理層
 
-#### ProgressTracker (`src/progress_tracker.py`)
-
+#### Test Management Framework
 **責任と境界**
-- **主要責任**: 処理タスクの進捗情報を管理し、SSE経由でクライアントに配信する
-- **ドメイン境界**: 進捗トラッキングドメイン
-- **データ所有**: タスクID、進捗データ（処理済み件数、全件数、開始時刻）
-- **トランザクション境界**: 各タスク単位で独立
+- **主要責任**: 2ファイル比較検証テストの全体制御と結果統合
+- **ドメイン境界**: テスト実行制御ドメイン
+- **データ所有**: テスト設定、実行状態、結果データ
+- **トランザクション境界**: 各テストケース単位で独立
 
 **依存関係**
-- **インバウンド**: APIエンドポイント、tqdmインターセプター
-- **アウトバウンド**: なし
-- **外部**: sse-starlette（SSE実装）
+- **インバウンド**: QAエンジニア、CI/CDシステム
+- **アウトバウンド**: Playwright MCP Wrapper、Test Reporter
+- **外部**: 既存Playwright MCPフレームワーク
 
-**サービスインターフェース**
-```python
-from typing import Dict, Optional
-from dataclasses import dataclass
-
-@dataclass
-class ProgressData:
-    task_id: str
-    total: int
-    current: int
-    percentage: float
-    elapsed_time: float
-    estimated_remaining: Optional[float]
-    status: str  # "processing", "completed", "error"
-    error_message: Optional[str]
-
-class ProgressTracker:
-    def create_task(self, total_items: int) -> str:
-        """新規タスクを作成してタスクIDを返す"""
-        pass
-
-    def update_progress(self, task_id: str, current: int) -> None:
-        """タスクの進捗を更新"""
-        pass
-
-    def get_progress(self, task_id: str) -> Optional[ProgressData]:
-        """タスクの現在の進捗を取得"""
-        pass
-
-    def complete_task(self, task_id: str, success: bool = True) -> None:
-        """タスクを完了/エラー状態にする"""
-        pass
-
-    async def stream_progress(self, task_id: str):
-        """SSEでの進捗ストリーミング"""
-        pass
-```
-
-- **事前条件**: タスクIDが存在すること
-- **事後条件**: 進捗データが更新されること
-- **不変条件**: current <= total
-
-#### TqdmInterceptor (`src/progress_tracker.py` 内部)
-
-**責任と境界**
-- **主要責任**: tqdmの出力をキャプチャして進捗データを抽出
-- **ドメイン境界**: ログキャプチャドメイン
-- **データ所有**: tqdm出力バッファ
-
-**サービスインターフェース**
-```python
-import io
-from contextlib import contextmanager
-
-class TqdmInterceptor:
-    @contextmanager
-    def capture_tqdm(self, task_id: str, progress_tracker: ProgressTracker):
-        """tqdm出力をキャプチャしてProgressTrackerに送信"""
-        pass
-
-    def parse_tqdm_output(self, output: str) -> Dict[str, int]:
-        """tqdm出力から進捗情報を抽出"""
-        # Return: {"current": int, "total": int}
-        pass
-```
-
-### APIエンドポイント層
-
-#### 進捗ストリーミングAPI
-
-**APIコントラクト**
-
-| Method | Endpoint | Request | Response | Errors |
-|--------|----------|---------|----------|--------|
-| GET | /api/progress/stream/{task_id} | - | SSE Stream | 404 |
-| GET | /api/progress/{task_id} | - | ProgressData | 404 |
-| POST | /api/compare/async | CompareRequest + File | {"task_id": str} | 400, 500 |
-
-**SSEイベント形式**
+**Service Interface**
 ```typescript
-interface ProgressEvent {
-  event: "progress" | "complete" | "error";
-  data: {
-    task_id: string;
-    current: number;
-    total: number;
-    percentage: number;
-    elapsed_seconds: number;
-    remaining_seconds?: number;
-    status: string;
-    error_message?: string;
-  };
+interface TestManagementFramework {
+  executeComprehensiveTest(): Promise<TestExecutionResult>;
+  validateDualFileComparison(
+    mode: "embedding" | "llm",
+    format: "score" | "file"
+  ): Promise<ValidationResult>;
+  generateTestReport(results: ValidationResult[]): TestReport;
+}
+
+interface TestExecutionResult {
+  totalCombinations: 4;
+  successfulCombinations: number;
+  failedCombinations: number;
+  executionTime: number;
+  detailedResults: ValidationResult[];
 }
 ```
 
-### フロントエンド層
-
-#### ProgressDisplay （Web UI JavaScript）
-
+#### Playwright MCP Integration Layer
 **責任と境界**
-- **主要責任**: SSEを受信して進捗UIを更新
-- **ドメイン境界**: UIプレゼンテーション層
-- **データ所有**: 表示用の進捗データキャッシュ
+- **主要責任**: 既存Playwright MCPフレームワークとの統合とWebUI操作制御
+- **ドメイン境界**: UI自動化ドメイン
+- **データ所有**: WebUI操作スクリプト、スクリーンショット、DOM状態
 
-**インターフェース**
-```javascript
-class ProgressDisplay {
-  constructor(containerId) {
-    this.container = document.getElementById(containerId);
-    this.eventSource = null;
-  }
+**Service Interface**
+```typescript
+interface PlaywrightMCPIntegration {
+  setupDualFileComparison(
+    file1: TestFile,
+    file2: TestFile,
+    options: ComparisonOptions
+  ): Promise<void>;
 
-  startMonitoring(taskId) {
-    // SSE接続を開始
-  }
+  executeComparison(): Promise<void>;
 
-  updateDisplay(progressData) {
-    // プログレスバー、時間、件数を更新
-  }
+  captureProgressDisplay(): Promise<ProgressDisplayData>;
 
-  handleComplete(resultData) {
-    // 完了表示と結果表示
-  }
+  extractAPIResponse(): Promise<APIResponseData>;
 
-  handleError(errorData) {
-    // エラー表示
-  }
+  collectDebugInformation(): Promise<DebugData>;
+}
+
+interface ComparisonOptions {
+  useLLM: boolean;
+  outputFormat: "score" | "file";
+  columnName?: string;
+}
+```
+
+### 検証・監視層
+
+#### Network Monitor Enhancement
+**責任と境界**
+- **主要責任**: 2ファイル比較時のAPI呼び出し監視と記録
+- **ドメイン境界**: ネットワーク監視ドメイン
+- **データ所有**: HTTPリクエスト/レスポンスデータ、タイミング情報
+
+**Service Interface**
+```typescript
+interface NetworkMonitorEnhancement {
+  startMonitoring(): void;
+
+  stopMonitoring(): void;
+
+  getRecordedRequests(): HTTPRequestRecord[];
+
+  validateAPIEndpoint(
+    expectedEndpoint: string,
+    actualRequest: HTTPRequestRecord
+  ): ValidationResult;
+}
+
+interface HTTPRequestRecord {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body: any;
+  response: {
+    status: number;
+    headers: Record<string, string>;
+    body: any;
+  };
+  timestamp: number;
+  duration: number;
+}
+```
+
+#### API Response Validation Engine
+**責任と境界**
+- **主要責任**: APIレスポンスの構造とメタデータの検証
+- **ドメイン境界**: レスポンス検証ドメイン
+- **データ所有**: 検証ルール、期待値定義、検証結果
+
+**Service Interface**
+```typescript
+interface APIResponseValidationEngine {
+  validateScoreResponse(
+    response: any,
+    expectedMethod: "embedding" | "llm"
+  ): ValidationResult;
+
+  validateFileResponse(
+    response: any,
+    expectedMethod: "embedding" | "llm"
+  ): ValidationResult;
+
+  validateMetadataConsistency(
+    response: any,
+    expectedMetadata: ExpectedMetadata
+  ): ValidationResult;
+}
+
+interface ExpectedMetadata {
+  calculation_method: "embedding" | "llm";
+  source_files: {
+    file1: string;
+    file2: string;
+  };
+  column_compared: string;
+}
+
+interface ValidationResult {
+  isValid: boolean;
+  errors: ValidationError[];
+  warnings: ValidationWarning[];
+  details: Record<string, any>;
+}
+```
+
+### レポート生成層
+
+#### Test Reporter
+**責任と境界**
+- **主要責任**: 包括的テスト結果の集約とレポート生成
+- **ドメイン境界**: レポート生成ドメイン
+- **データ所有**: テスト結果データ、レポートテンプレート、出力形式
+
+**Service Interface**
+```typescript
+interface TestReporter {
+  generateComprehensiveReport(
+    results: TestExecutionResult
+  ): ComprehensiveTestReport;
+
+  exportReport(
+    report: ComprehensiveTestReport,
+    format: "markdown" | "json" | "html"
+  ): string;
+
+  saveReport(
+    report: ComprehensiveTestReport,
+    filePath: string
+  ): Promise<void>;
+}
+
+interface ComprehensiveTestReport {
+  executionSummary: ExecutionSummary;
+  combinationResults: CombinationResult[];
+  performanceMetrics: PerformanceMetrics;
+  errorAnalysis: ErrorAnalysis;
+  recommendations: string[];
 }
 ```
 
@@ -259,74 +305,99 @@ class ProgressDisplay {
 ### ドメインモデル
 
 **コア概念**:
-- **ProcessTask**: 一つの比較処理タスクを表すエンティティ
-- **ProgressSnapshot**: ある時点での進捗状態を表す値オブジェクト
-- **TaskCompleted**: タスク完了を表すドメインイベント
+- **TestExecution**: 一回の包括的テスト実行を表すエンティティ
+- **CombinationTest**: 4つの組み合わせのうち1つのテストを表すエンティティ
+- **APICallValidation**: API呼び出しの検証結果を表す値オブジェクト
+- **ProgressDisplayValidation**: 進捗表示の検証結果を表す値オブジェクト
 
 ### 論理データモデル
 
-**タスク管理構造**:
-```python
-# インメモリデータストア
-tasks: Dict[str, TaskData] = {}
+**テスト実行データ構造**:
+```typescript
+interface TestExecutionData {
+  executionId: string;
+  startTime: Date;
+  endTime?: Date;
+  status: "running" | "completed" | "failed";
+  combinations: CombinationTestData[];
+  summary: ExecutionSummary;
+}
 
-@dataclass
-class TaskData:
-    task_id: str
-    created_at: datetime
-    total_items: int
-    current_items: int
-    start_time: float
-    last_update: float
-    status: str
-    result: Optional[Dict]
-    error: Optional[str]
+interface CombinationTestData {
+  combinationId: string;
+  mode: "embedding" | "llm";
+  format: "score" | "file";
+  expectedEndpoint: string;
+  actualAPICall?: HTTPRequestRecord;
+  responseValidation?: ValidationResult;
+  progressValidation?: ProgressValidationResult;
+  uiValidation?: UIValidationResult;
+  status: "pending" | "running" | "passed" | "failed";
+  errors: string[];
+  executionTime: number;
+}
 ```
 
 ## エラーハンドリング
 
 ### エラー戦略
-進捗トラッキングのエラーは処理自体を停止させず、ユーザーに適切なフィードバックを提供します。
+テスト検証のエラーは段階的にキャプチャし、詳細なデバッグ情報と共に報告する。
 
 ### エラーカテゴリと対応
 
-**ユーザーエラー (4xx)**:
-- 無効なタスクID → 404エラーと再試行ガイダンス
-- ファイルサイズ超過 → 413エラーとファイル分割提案
+**テスト実行エラー**:
+- WebUI操作失敗 → スクリーンショット付きエラーレポート
+- API呼び出し失敗 → ネットワークログと詳細エラー情報
+- タイムアウト → 実行時間分析と推奨対策
 
-**システムエラー (5xx)**:
-- SSE接続失敗 → 自動再接続（最大5回）
-- メモリ不足 → 処理中断と部分結果の提供
+**検証エラー**:
+- エンドポイント不一致 → 期待値vs実際値の詳細比較
+- レスポンス構造エラー → スキーマ差分とフィールド詳細
+- メタデータ不整合 → フィールド別比較表
 
-**ビジネスロジックエラー (422)**:
-- 処理タイムアウト → タイムアウトメッセージと再試行オプション
-- 不正なJSONL形式 → 修復試行とエラー箇所の表示
+**システムエラー**:
+- Playwright MCP接続失敗 → 環境設定チェックリスト
+- ファイルアップロード失敗 → ファイル内容とサイズ検証
 
 ### モニタリング
-- SSE接続数の監視
-- タスクのメモリ使用量追跡
-- エラー率とタイムアウト頻度の記録
+- テスト実行成功率の追跡
+- API呼び出し応答時間の監視
+- エラーパターンの分析と対策提案
 
 ## テスト戦略
 
 ### ユニットテスト
-- ProgressTrackerのタスク管理ロジック
-- TqdmInterceptorの出力パース
-- 進捗データの計算ロジック
-- 推定残り時間の算出
+- APIレスポンス検証エンジンの各メソッド
+- ネットワーク監視機能の記録と解析
+- テストレポート生成ロジック
+- メタデータ一貫性チェック機能
 
 ### 統合テスト
-- APIエンドポイントとProgressTrackerの連携
-- SSEストリーミングの動作確認
-- tqdm出力のキャプチャと配信フロー
+- Playwright MCPとネットワーク監視の連携
+- テスト管理フレームワークと検証エンジンの統合
+- 4つの組み合わせの順次実行フロー
+- レポート生成と保存機能
 
-### E2E/UIテスト
-- ファイルアップロードから進捗表示までのフロー
-- SSE接続と再接続の動作
-- プログレスバーとタイマーの更新
-- エラー時のUIフィードバック
+### E2E/実機テスト
+- 実際のWebUIでの2ファイル比較操作
+- setIntervalポーリングと進捗表示の連携確認
+- エラーケース（LLM API障害等）のハンドリング
+- 包括的レポートの自動生成と保存
 
 ### パフォーマンステスト
-- 大規模ファイル（100万行）での進捗更新頻度
-- 複数クライアント同時接続時のSSE配信
-- メモリ使用量とガベージコレクション
+- 4つの組み合わせの連続実行時間
+- 大容量ファイルでのテスト実行性能
+- 複数テスト実行時のリソース使用量
+- ネットワーク監視のオーバーヘッド測定
+
+## 要件トレーサビリティ
+
+| 要件 | 要件概要 | コンポーネント | インターフェース | フロー |
+|------|----------|------------|------------|-----|
+| 10.1-10.4 | 4つの組み合わせAPI検証 | Test Management Framework, Network Monitor | validateDualFileComparison | 2ファイル比較検証フロー |
+| 10.5 | ネットワーク監視・記録 | Network Monitor Enhancement | getRecordedRequests | ネットワーク記録フロー |
+| 10.6 | APIレスポンス検証 | API Response Validation Engine | validateScoreResponse, validateFileResponse | レスポンス検証フロー |
+| 10.7 | 進捗表示統合検証 | Playwright MCP Integration | captureProgressDisplay | 進捗表示検証フロー |
+| 10.8 | エラーハンドリング検証 | Error Handling Validator | validateErrorScenarios | エラーハンドリングフロー |
+| 10.9 | UI/APIレスポンス整合性 | UI Consistency Validator | validateUIConsistency | 整合性検証フロー |
+| 10.10-10.12 | 包括的レポート生成 | Test Reporter | generateComprehensiveReport | レポート生成フロー |
